@@ -4,7 +4,7 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "hikvision-ey"
-version = "0.3.1"
+version = "0.3.2"
 description = "Home Assistant custom integration for Hikvision EY-series video intercom (DS-KV74xx EY, DS-KH7300EY, DS-KAD7063)"
 readme = "README.md"
 license = {file = "LICENSE"}

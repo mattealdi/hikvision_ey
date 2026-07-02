@@ -3,6 +3,46 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.2] - 2026-07-02
+
+### Fixed
+- **Logo integrazione ora visibile in HA**: le icone erano in
+  `custom_components/hikvision_ey/icon.png` ma HA 2026.3+ le carica dalla
+  sottocartella `brand/`. Spostate in `custom_components/hikvision_ey/brand/`
+  con tutte e 4 le varianti richieste dallo standard HA:
+  - `icon.png` (256×256)
+  - `icon@2x.png` (512×512)
+  - `logo.png` (256×256)
+  - `logo@2x.png` (512×512)
+- **Rimosso il sensore duplicato "Segnale WiFi" orfano** dalla v0.3.0.
+  Il cleanup automatico ora rimuove anche `_rssi`.
+
+### Changed
+- Il sensore percentuale WiFi ora si chiama **"Segnale WiFi"** (invece
+  di "Qualità WiFi") — il valore rimane in percentuale 0-100%,
+  cambia solo l'etichetta per essere più naturale in italiano.
+
+### Removed
+- **Binary sensor `monitor_online` e `outdoor_online`**: entrambi
+  restituivano identicamente `dev.is_online`, duplicando il sensore
+  `online`. Erano i 2 dei 4 sensori "Citofono Casa — Non disponibile"
+  che appesantivano la lista.
+- Cleanup automatico esteso: rimuove dal registry anche le entità
+  `_rssi`, `_monitor_online`, `_outdoor_online` orfane.
+
+### Result
+Dopo l'update l'integrazione mostra un set ancora più snello:
+- **7 button** (invariati)
+- **4 binary_sensor**: Online, Cloud Connected, Doorbell Ringing, Call Active
+- **9 sensor** (invariati)
+
+Totale: **20 entità** invece di 22 (rimossi 2 duplicati).
+
+Dei restanti 2 sensori "Citofono Casa — Non disponibile" che vedi in
+foto, questi sono `Doorbell Ringing` (campanello che suona) e
+`Call Active` (chiamata in corso): **si popolano SOLO quando qualcuno
+suona al citofono**. Sono lo stato istantaneo, non un errore.
+
 ## [0.3.1] - 2026-07-02
 
 ### Removed

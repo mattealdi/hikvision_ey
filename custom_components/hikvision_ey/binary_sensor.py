@@ -1,12 +1,14 @@
 """Binary sensor entities per l'integrazione Hikvision EY.
 
-6 binary_sensor:
-- is_ringing       — campanello premuto (True se ringing)
-- in_call          — chiamata in corso
+4 binary_sensor:
 - online           — device online sul cloud
 - cloud_connected  — cloud reachable (basato su coordinator)
-- monitor_online   — monitor indoor online
-- outdoor_online   — pannello esterno online
+- is_ringing       — campanello premuto (True se ringing)
+- in_call          — chiamata in corso
+
+NOTE v0.3.2: rimossi 'monitor_online' e 'outdoor_online' perché il
+coordinator li impostava entrambi al valore di dev.is_online, duplicando
+esattamente il sensore 'online'. Erano rumore, non informazione utile.
 """
 from __future__ import annotations
 
@@ -68,20 +70,6 @@ CALL_BINARY_SENSOR_DESCRIPTIONS: tuple[HikvisionEyBinarySensorDescription, ...] 
         device_class=BinarySensorDeviceClass.SOUND,
         sensor_type="call",
         icon="mdi:phone-in-talk",
-    ),
-    HikvisionEyBinarySensorDescription(
-        key="monitor_online",
-        translation_key="monitor_online",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        sensor_type="device",
-        icon="mdi:monitor",
-    ),
-    HikvisionEyBinarySensorDescription(
-        key="outdoor_online",
-        translation_key="outdoor_online",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        sensor_type="device",
-        icon="mdi:doorbell-video",
     ),
 )
 
@@ -148,11 +136,6 @@ class HikvisionEyDeviceBinarySensor(HikvisionEyBinarySensor):
         if key == "cloud_connected":
             # True se coordinator ha dati validi e device è online
             return bool(self.coordinator.data) and bool(dev.is_online)
-
-        if key in ("monitor_online", "outdoor_online"):
-            # Per ora usa is_online del device generico
-            # In futuro si può distinguere per device_type
-            return dev.is_online
 
         return None
 

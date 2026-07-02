@@ -118,20 +118,6 @@
           "off": "Nessuna Chiamata",
           "on": "In Chiamata"
         }
-      },
-      "monitor_online": {
-        "name": "Monitor Online",
-        "state": {
-          "off": "Offline",
-          "on": "Online"
-        }
-      },
-      "outdoor_online": {
-        "name": "Pannello Esterno Online",
-        "state": {
-          "off": "Offline",
-          "on": "Online"
-        }
       }
     },
     "sensor": {
@@ -157,7 +143,7 @@
         "name": "Contatore Chiamate"
       },
       "wifi_quality": {
-        "name": "Qualità WiFi"
+        "name": "Segnale WiFi"
       },
       "wifi_address": {
         "name": "Indirizzo WiFi"

@@ -80,10 +80,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 def _async_cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Rimuove entità orfane lasciate da versioni precedenti.
 
-    Dalla v0.3.1:
-      - la piattaforma 'camera' è stata rimossa (nessuna delle 50 entità
-        `camera N@<serial>` esposte dal cloud era usabile);
-      - il sensore 'uptime_info' è stato rimosso (duplicava il firmware).
+    Storico:
+      - v0.3.1: rimossa piattaforma 'camera' e sensore 'uptime_info'
+      - v0.3.2: rimosso sensore 'rssi' (rinominato 'wifi_quality' con
+        unit %) e binary sensor 'monitor_online' / 'outdoor_online'
+        (duplicavano 'online')
 
     Questa funzione elimina tali entità dal registry al primo avvio
     dopo l'aggiornamento, così l'utente non si ritrova più la lista
@@ -91,7 +92,12 @@ def _async_cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> No
     """
     registry = er.async_get(hass)
     stale_platforms = {"camera"}
-    stale_unique_id_suffixes = {"_uptime_info"}
+    stale_unique_id_suffixes = {
+        "_uptime_info",
+        "_rssi",
+        "_monitor_online",
+        "_outdoor_online",
+    }
     removed = 0
     for entity in list(registry.entities.values()):
         if entity.config_entry_id != entry.entry_id:

@@ -102,12 +102,6 @@
       },
       "in_call": {
         "name": "Call Active"
-      },
-      "monitor_online": {
-        "name": "Monitor Online"
-      },
-      "outdoor_online": {
-        "name": "Outdoor Station Online"
       }
     },
     "sensor": {
@@ -133,7 +127,7 @@
         "name": "Call Count"
       },
       "wifi_quality": {
-        "name": "WiFi Quality"
+        "name": "WiFi Signal"
       },
       "wifi_address": {
         "name": "WiFi Address"
