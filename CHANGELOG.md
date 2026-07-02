@@ -3,6 +3,33 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.0] - 2026-07-02
+
+### Added
+- **Camera entity funzionante**: la piattaforma `camera` ora restituisce
+  lo stream RTSP live dal monitor DS-KH7300EY e uno snapshot JPEG
+  on-demand via ISAPI (`/Streaming/channels/101/picture`).
+- Metodi `LocalISAPIClient.rtsp_stream_url(channel, stream)` e
+  `LocalISAPIClient.get_snapshot(channel)` in `api/isapi.py`.
+- Proprietà `host`, `username`, `password` esposte da `LocalISAPIClient`
+  per costruzione URL RTSP.
+- **Icona integrazione**: `custom_components/hikvision_ey/icon.png`
+  (256×256) mostrata in Home Assistant nella dashboard integrazioni.
+
+### Changed
+- La camera entity è ora abilitata **solo** quando è configurato il
+  client ISAPI locale (serve IP + credenziali admin del monitor).
+  In modalità solo-cloud la piattaforma non registra entity camera.
+- `stream_source()` usa lo sub-stream (canale 102) per minore latenza.
+- Corretto codeowner e URL documentazione in `manifest.json`:
+  `@mattealdi` (repo pubblico `github.com/mattealdi/hikvision_ey`).
+- Bump `manifest.json` e `pyproject.toml` → 0.3.0.
+
+### Notes
+- Logo/icona brand ufficiale in via di pubblicazione su
+  [home-assistant/brands](https://github.com/home-assistant/brands)
+  (PR in corso, path `custom_integrations/hikvision_ey/`).
+
 ## [0.2.0] - 2026-07-02
 
 ### 🎯 Endpoint di unlock VERIFICATO empiricamente

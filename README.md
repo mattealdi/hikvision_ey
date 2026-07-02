@@ -149,6 +149,36 @@ Per testare: `curl -v --digest -u admin:PASSWORD http://IP_MONITOR/ISAPI/System/
 
 ---
 
+## Camera (anteprima videocitofono)
+
+Dalla v0.3.0 l'integrazione espone una **entity `camera`** che mostra la
+ripresa live del pannello esterno (DS-KV7413EY) attraverso il monitor
+interno (DS-KH7300EY) collegato al bus 2-fili.
+
+**Requisiti:**
+- ISAPI locale configurato (host + credenziali admin del monitor).
+- Il monitor deve essere raggiungibile in LAN da Home Assistant.
+- Home Assistant con il componente `stream` attivo (di default nel core).
+
+**Come funziona:**
+- `stream_source()` → URL RTSP `rtsp://user:pass@<monitor-ip>:554/Streaming/Channels/102`
+  (sub-stream SD, latenza minima per anteprima on-demand).
+- `async_camera_image()` → snapshot JPEG via
+  `GET /ISAPI/Streaming/channels/101/picture`.
+
+**Nota:** in modalità solo-cloud (senza ISAPI locale) la piattaforma
+camera non registra alcuna entity, perché lo stream RTSP richiede
+accesso diretto al monitor sulla LAN.
+
+### Esempio card Lovelace
+
+```yaml
+type: picture-entity
+entity: camera.hikvision_ey_camera_1
+camera_view: live
+show_state: false
+```
+
 ## Servizi
 
 ### `hikvision_ey.open_gate`

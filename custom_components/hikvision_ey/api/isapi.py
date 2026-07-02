@@ -73,6 +73,82 @@ class LocalISAPIClient:
         """Chiude la sessione."""
         await self.close()
 
+    # ---- Proprieta' esposte per stream/snapshot -----------------------------
+
+    @property
+    def host(self) -> str:
+        """IP o hostname del monitor (per costruire URL RTSP)."""
+        return self._host
+
+    @property
+    def username(self) -> str:
+        """Username admin (per RTSP URL)."""
+        return self._username
+
+    @property
+    def password(self) -> str:
+        """Password admin (per RTSP URL)."""
+        return self._password
+
+    def rtsp_stream_url(self, channel: int = 1, stream: int = 1) -> str:
+        """Costruisce l'URL RTSP standard Hikvision per lo stream video.
+
+        Args:
+            channel: Canale video (1 = main, 2 = second, ...).
+            stream: Sottostream (1 = HD principale, 2 = SD low-bandwidth).
+
+        Returns:
+            URL rtsp://user:pass@host:554/Streaming/Channels/{channel}{stream}
+            Esempio: rtsp://admin:xxx@192.168.1.50:554/Streaming/Channels/101
+
+        Note:
+            Il pattern `{channel}{stream}` è lo standard ISAPI: 101 = ch1 main,
+            102 = ch1 sub. Sul DS-KH7300EY il channel 1 espone il video
+            proveniente dal pannello esterno DS-KV7413EY tramite bus 2-fili.
+        """
+        from urllib.parse import quote
+
+        user_enc = quote(self._username, safe="")
+        pass_enc = quote(self._password, safe="")
+        channel_code = f"{channel}{'0' if stream == 1 else stream}"
+        # Standard Hikvision: 101 = ch1 main, 102 = ch1 sub
+        if stream == 1:
+            channel_code = f"{channel}01"
+        else:
+            channel_code = f"{channel}0{stream}"
+        return (
+            f"rtsp://{user_enc}:{pass_enc}@{self._host}:554/"
+            f"Streaming/Channels/{channel_code}"
+        )
+
+    async def get_snapshot(self, channel: int = 1) -> bytes | None:
+        """Ottiene uno snapshot JPEG on-demand dal monitor via ISAPI.
+
+        Endpoint ISAPI standard Hikvision:
+            GET /ISAPI/Streaming/channels/{channel}01/picture
+
+        Args:
+            channel: Canale video (1 = main).
+
+        Returns:
+            Bytes JPEG dell'immagine oppure None se non disponibile.
+        """
+        url = f"http://{self._host}/ISAPI/Streaming/channels/{channel}01/picture"
+        _LOGGER.debug("[Local ISAPI] GET snapshot %s", url)
+        try:
+            status, body = await self._request("GET", url)
+        except Exception as exc:
+            _LOGGER.warning("[Local ISAPI] Snapshot request failed: %s", exc)
+            return None
+
+        if status == 200 and body:
+            _LOGGER.debug("[Local ISAPI] Snapshot OK: %d bytes", len(body))
+            return body
+        _LOGGER.warning(
+            "[Local ISAPI] Snapshot returned status=%s, len=%d", status, len(body or b"")
+        )
+        return None
+
     async def _request(
         self,
         method: str,
