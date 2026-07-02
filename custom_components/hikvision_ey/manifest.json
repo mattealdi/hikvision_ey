@@ -1,0 +1,15 @@
+{
+  "domain": "hikvision_ey",
+  "name": "Hikvision EY",
+  "codeowners": ["@matteoaldi"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/matteoaldi/hikvision_ey",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/matteoaldi/hikvision_ey/issues",
+  "loggers": ["custom_components.hikvision_ey"],
+  "quality_scale": "gold",
+  "requirements": [],
+  "version": "0.2.0"
+}

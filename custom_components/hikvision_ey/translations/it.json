@@ -1,0 +1,175 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hikvision EY — Credenziali Cloud",
+        "description": "Inserisci le credenziali del tuo account Hik-Connect.",
+        "data": {
+          "username": "Nome utente (email)",
+          "password": "Password",
+          "region": "Regione cloud",
+          "timeout": "Timeout richieste (secondi)"
+        },
+        "data_description": {
+          "region": "Seleziona la regione cloud del tuo account. Scegli EU per l'Europa.",
+          "timeout": "Timeout HTTP in secondi (default 15)."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Ri-autenticazione Hikvision EY",
+        "description": "La sessione è scaduta. Inserisci la password per ri-autenticarti.",
+        "data": {
+          "password": "Password",
+          "region": "Regione cloud"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Credenziali non valide. Verifica nome utente e password.",
+      "captcha_required": "CAPTCHA richiesto. Effettua il login nell'app Hik-Connect, poi riprova.",
+      "cannot_connect": "Impossibile connettersi al cloud Hik-Connect. Verifica la connessione internet.",
+      "unknown": "Errore imprevisto. Controlla i log di Home Assistant per i dettagli."
+    },
+    "abort": {
+      "already_configured": "Questo account è già configurato.",
+      "reauth_successful": "Ri-autenticazione completata con successo."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni Hikvision EY",
+        "data": {
+          "local_isapi_enabled": "Abilita ISAPI locale (LAN diretta, più veloce)",
+          "timeout": "Timeout richieste (secondi)"
+        },
+        "data_description": {
+          "local_isapi_enabled": "Abilita la comunicazione diretta LAN con il monitor interno. Richiede IP fisso e credenziali admin."
+        }
+      },
+      "local_isapi": {
+        "title": "Configurazione ISAPI Locale",
+        "description": "Configura l'accesso LAN diretto al monitor interno (DS-KH7300EY-WTE2).",
+        "data": {
+          "local_host": "IP o hostname del monitor",
+          "local_username": "Nome utente admin",
+          "local_password": "Password admin"
+        },
+        "data_description": {
+          "local_host": "Indirizzo IP del monitor. Cercalo nella lista dispositivi del router o usa SADP tool.",
+          "local_username": "Nome utente admin del dispositivo — NON le credenziali account Hik-Connect.",
+          "local_password": "Password admin del dispositivo."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect_local": "Impossibile connettersi all'endpoint ISAPI locale. Verifica IP, credenziali e che il dispositivo sia raggiungibile."
+    }
+  },
+  "entity": {
+    "button": {
+      "open_gate": {
+        "name": "Apri Cancelletto"
+      },
+      "open_door_1": {
+        "name": "Apri Porta 1"
+      },
+      "open_door_2": {
+        "name": "Apri Porta 2"
+      },
+      "answer": {
+        "name": "Rispondi Chiamata"
+      },
+      "hangup": {
+        "name": "Riaggancia"
+      },
+      "restart": {
+        "name": "Riavvia Dispositivo"
+      },
+      "refresh_token": {
+        "name": "Aggiorna Token"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online",
+        "state": {
+          "off": "Offline",
+          "on": "Online"
+        }
+      },
+      "cloud_connected": {
+        "name": "Cloud Connesso",
+        "state": {
+          "off": "Disconnesso",
+          "on": "Connesso"
+        }
+      },
+      "is_ringing": {
+        "name": "Campanello in Suono",
+        "state": {
+          "off": "Inattivo",
+          "on": "Suona"
+        }
+      },
+      "in_call": {
+        "name": "Chiamata Attiva",
+        "state": {
+          "off": "Nessuna Chiamata",
+          "on": "In Chiamata"
+        }
+      },
+      "monitor_online": {
+        "name": "Monitor Online",
+        "state": {
+          "off": "Offline",
+          "on": "Online"
+        }
+      },
+      "outdoor_online": {
+        "name": "Pannello Esterno Online",
+        "state": {
+          "off": "Offline",
+          "on": "Online"
+        }
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Versione Firmware"
+      },
+      "device_name": {
+        "name": "Nome Dispositivo"
+      },
+      "serial": {
+        "name": "Numero Seriale"
+      },
+      "cloud_status": {
+        "name": "Stato Cloud"
+      },
+      "last_call": {
+        "name": "Ultima Chiamata"
+      },
+      "last_event": {
+        "name": "Ultimo Evento"
+      },
+      "call_count": {
+        "name": "Contatore Chiamate"
+      },
+      "rssi": {
+        "name": "Segnale WiFi"
+      },
+      "wifi_address": {
+        "name": "Indirizzo WiFi"
+      },
+      "uptime_info": {
+        "name": "Info Uptime"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Telecamera"
+      }
+    }
+  }
+}

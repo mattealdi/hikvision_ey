@@ -1,0 +1,6 @@
+{
+  "name": "Hikvision EY",
+  "homeassistant": "2025.1.0",
+  "render_readme": true,
+  "iot_class": "Cloud Polling"
+}

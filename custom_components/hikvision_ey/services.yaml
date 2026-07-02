@@ -1,0 +1,87 @@
+open_gate:
+  name: Open Gate / Door
+  description: >
+    Open a gate or door on a Hikvision EY device. Tries multiple cloud
+    strategies automatically unless a specific strategy is specified.
+  fields:
+    device_id:
+      name: Device ID
+      description: Serial number of the target device (e.g. K1234567).
+      required: true
+      example: "K1234567"
+      selector:
+        text:
+    lock_index:
+      name: Lock Index
+      description: Zero-based index of the lock/door to open (default 0).
+      required: false
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 9
+          mode: box
+    strategy:
+      name: Unlock Strategy
+      description: >
+        Which strategy to use. "auto" tries all in order (Local → A4 → A3 → A2 → A1).
+        Use explicit strategies for debugging.
+      required: false
+      default: auto
+      example: auto
+      selector:
+        select:
+          options:
+            - auto
+            - cloud_a1
+            - cloud_a2
+            - cloud_a3
+            - cloud_a4
+            - local
+
+answer_call:
+  name: Answer Call
+  description: Answer an incoming call from the doorbell.
+  fields:
+    device_id:
+      name: Device ID
+      description: Serial number of the target device.
+      required: true
+      example: "K1234567"
+      selector:
+        text:
+
+hangup:
+  name: Hang Up
+  description: Hang up an ongoing call.
+  fields:
+    device_id:
+      name: Device ID
+      description: Serial number of the target device.
+      required: true
+      example: "K1234567"
+      selector:
+        text:
+
+restart:
+  name: Restart Device
+  description: Send a remote restart command to a device.
+  fields:
+    device_id:
+      name: Device ID
+      description: Serial number of the target device.
+      required: true
+      example: "K1234567"
+      selector:
+        text:
+
+refresh:
+  name: Refresh
+  description: Force an immediate update of all device data from the cloud.
+
+reconnect:
+  name: Reconnect
+  description: >
+    Force a full re-login to the Hik-Connect cloud. Useful after password
+    change or when the integration is stuck.

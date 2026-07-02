@@ -1,0 +1,151 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hikvision EY — Cloud Credentials",
+        "description": "Enter your Hik-Connect account credentials.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "region": "Cloud Region",
+          "timeout": "Request timeout (seconds)"
+        },
+        "data_description": {
+          "region": "Select the cloud region for your account (EU for Europe).",
+          "timeout": "HTTP request timeout in seconds (default 15)."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Hikvision EY",
+        "description": "Your session has expired. Please enter your password to re-authenticate.",
+        "data": {
+          "password": "Password",
+          "region": "Cloud Region"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials. Please check your username and password.",
+      "captcha_required": "CAPTCHA required. Please login via the Hik-Connect mobile app and retry.",
+      "cannot_connect": "Cannot connect to Hik-Connect cloud. Check your internet connection.",
+      "unknown": "Unexpected error. Check Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hikvision EY Options",
+        "data": {
+          "local_isapi_enabled": "Enable local ISAPI (faster, LAN direct)",
+          "timeout": "Request timeout (seconds)"
+        },
+        "data_description": {
+          "local_isapi_enabled": "Enable direct LAN communication with the indoor monitor (recommended if IP is available)."
+        }
+      },
+      "local_isapi": {
+        "title": "Local ISAPI Configuration",
+        "description": "Enter the local network details for the indoor monitor (DS-KH7300EY).",
+        "data": {
+          "local_host": "Monitor IP address or hostname",
+          "local_username": "Admin username",
+          "local_password": "Admin password"
+        },
+        "data_description": {
+          "local_host": "IP address found in your router's device list or via SADP tool.",
+          "local_username": "Device admin username (NOT your Hik-Connect account).",
+          "local_password": "Device admin password."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect_local": "Cannot connect to local ISAPI endpoint. Check IP address and credentials."
+    }
+  },
+  "entity": {
+    "button": {
+      "open_gate": {
+        "name": "Open Gate"
+      },
+      "open_door_1": {
+        "name": "Open Door 1"
+      },
+      "open_door_2": {
+        "name": "Open Door 2"
+      },
+      "answer": {
+        "name": "Answer Call"
+      },
+      "hangup": {
+        "name": "Hang Up"
+      },
+      "restart": {
+        "name": "Restart Device"
+      },
+      "refresh_token": {
+        "name": "Refresh Token"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      },
+      "cloud_connected": {
+        "name": "Cloud Connected"
+      },
+      "is_ringing": {
+        "name": "Doorbell Ringing"
+      },
+      "in_call": {
+        "name": "Call Active"
+      },
+      "monitor_online": {
+        "name": "Monitor Online"
+      },
+      "outdoor_online": {
+        "name": "Outdoor Station Online"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmware Version"
+      },
+      "device_name": {
+        "name": "Device Name"
+      },
+      "serial": {
+        "name": "Serial Number"
+      },
+      "cloud_status": {
+        "name": "Cloud Status"
+      },
+      "last_call": {
+        "name": "Last Call Status"
+      },
+      "last_event": {
+        "name": "Last Event"
+      },
+      "call_count": {
+        "name": "Call Count"
+      },
+      "rssi": {
+        "name": "WiFi Signal Strength"
+      },
+      "wifi_address": {
+        "name": "WiFi Address"
+      },
+      "uptime_info": {
+        "name": "Uptime Info"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Camera"
+      }
+    }
+  }
+}
