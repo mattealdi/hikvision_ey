@@ -149,35 +149,19 @@ Per testare: `curl -v --digest -u admin:PASSWORD http://IP_MONITOR/ISAPI/System/
 
 ---
 
-## Camera (anteprima videocitofono)
+## Nota sulla telecamera
 
-Dalla v0.3.0 l'integrazione espone una **entity `camera`** che mostra la
-ripresa live del pannello esterno (DS-KV7413EY) attraverso il monitor
-interno (DS-KH7300EY) collegato al bus 2-fili.
+**Dalla v0.3.1 l'integrazione non espone entità `camera`.**
 
-**Requisiti:**
-- ISAPI locale configurato (host + credenziali admin del monitor).
-- Il monitor deve essere raggiungibile in LAN da Home Assistant.
-- Home Assistant con il componente `stream` attivo (di default nel core).
+Motivo: il modello **DS-KH7300EY-WTE2** non abilita di fabbrica un server
+RTSP raggiungibile dalla LAN, e il cloud Hik-Connect restituisce fino a
+50 canali placeholder vuoti che non hanno alcun flusso associato.
+Esporli come entità HA riempiva la dashboard di voci "Non disponibile"
+senza beneficio pratico.
 
-**Come funziona:**
-- `stream_source()` → URL RTSP `rtsp://user:pass@<monitor-ip>:554/Streaming/Channels/102`
-  (sub-stream SD, latenza minima per anteprima on-demand).
-- `async_camera_image()` → snapshot JPEG via
-  `GET /ISAPI/Streaming/channels/101/picture`.
-
-**Nota:** in modalità solo-cloud (senza ISAPI locale) la piattaforma
-camera non registra alcuna entity, perché lo stream RTSP richiede
-accesso diretto al monitor sulla LAN.
-
-### Esempio card Lovelace
-
-```yaml
-type: picture-entity
-entity: camera.hikvision_ey_camera_1
-camera_view: live
-show_state: false
-```
+Se hai una videocamera IP separata (es. una DS-2CD… sulla stessa LAN),
+configurala con l'integrazione **Generic Camera** standard di
+Home Assistant usando l'URL RTSP diretto della camera.
 
 ## Servizi
 

@@ -156,19 +156,11 @@
       "call_count": {
         "name": "Contatore Chiamate"
       },
-      "rssi": {
-        "name": "Segnale WiFi"
+      "wifi_quality": {
+        "name": "Qualità WiFi"
       },
       "wifi_address": {
         "name": "Indirizzo WiFi"
-      },
-      "uptime_info": {
-        "name": "Info Uptime"
-      }
-    },
-    "camera": {
-      "camera": {
-        "name": "Telecamera"
       }
     }
   }

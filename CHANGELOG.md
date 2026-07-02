@@ -3,6 +3,44 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.1] - 2026-07-02
+
+### Removed
+- **Piattaforma `camera` completamente rimossa**. Il modello DS-KH7300EY-WTE2
+  non espone RTSP e il cloud Hik-Connect restituiva 50 canali placeholder
+  vuoti (`camera 1@…` … `camera 50@…`) che ingolfavano la UI di HA.
+- Rimosso il file `camera.py` e i metodi ausiliari `rtsp_stream_url()` /
+  `get_snapshot()` da `LocalISAPIClient` (non più utilizzati).
+- Rimosso il sensore `uptime_info` (duplicava il firmware).
+
+### Fixed
+- Sensore WiFi: il cloud Hik-Connect espone `signal` come **percentuale
+  0-100%**, non dBm. Corretto: nuovo sensore `wifi_quality` con unit
+  `%` e device_class None. Prima si vedeva l'assurdo `100 dBm`.
+- Corretti tutti i nomi entità in `strings.json`, `translations/en.json`,
+  `translations/it.json` (rimossa sezione `camera`, rinominato `rssi`
+  → `wifi_quality`).
+
+### Added
+- **Cleanup automatico dell'entity registry al primo avvio dopo
+  l'aggiornamento**: `_async_cleanup_stale_entities()` rimuove
+  automaticamente le entità `camera.*` e `sensor.*_uptime_info`
+  lasciate da versioni precedenti, così l'utente non deve pulirle
+  a mano.
+
+### Result
+Dopo l'update l'integrazione mostra un set snello e coerente:
+- **7 button**: Aggiorna Token, Apri Cancelletto, Apri Porta 1, Apri
+  Porta 2, Riaggancia, Riavvia Dispositivo, Rispondi Chiamata
+- **6 binary_sensor**: Online, Cloud Connected, Doorbell Ringing,
+  Call Active, Monitor Online, Outdoor Station Online
+- **9 sensor**: Firmware, Nome Dispositivo, Numero Seriale, Stato Cloud,
+  Ultima Chiamata, Ultimo Evento, Contatore Chiamate, **Qualità WiFi %**,
+  Indirizzo WiFi
+
+Totale: **22 entità** invece delle **~66 di v0.3.0** (50 camere fake
++ 2 duplicati + 14 utili).
+
 ## [0.3.0] - 2026-07-02
 
 ### Added

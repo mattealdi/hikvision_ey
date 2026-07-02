@@ -156,19 +156,11 @@
       "call_count": {
         "name": "Call Count"
       },
-      "rssi": {
-        "name": "WiFi Signal Strength"
+      "wifi_quality": {
+        "name": "WiFi Quality"
       },
       "wifi_address": {
         "name": "WiFi Address"
-      },
-      "uptime_info": {
-        "name": "Uptime Info"
-      }
-    },
-    "camera": {
-      "camera": {
-        "name": "Camera"
       }
     }
   }

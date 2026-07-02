@@ -7,6 +7,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 
 from .api.exceptions import AuthError, CaptchaRequired, HikvisionEyError
 from .const import DOMAIN, PLATFORMS
@@ -34,6 +35,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ConfigEntryNotReady: On network/connection error.
     """
     _LOGGER.info("[Setup] Setting up %s entry %s", DOMAIN, entry.entry_id)
+
+    # Pulizia entity registry: rimuove entità camera orfane e sensori
+    # deprecati da versioni precedenti (v0.2.x / v0.3.0)
+    _async_cleanup_stale_entities(hass, entry)
 
     # Coordinator per la lista device
     device_coordinator = HikvisionEyDeviceCoordinator(hass, entry)
@@ -70,6 +75,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info("[Setup] %s setup complete for entry %s", DOMAIN, entry.entry_id)
     return True
+
+
+def _async_cleanup_stale_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Rimuove entità orfane lasciate da versioni precedenti.
+
+    Dalla v0.3.1:
+      - la piattaforma 'camera' è stata rimossa (nessuna delle 50 entità
+        `camera N@<serial>` esposte dal cloud era usabile);
+      - il sensore 'uptime_info' è stato rimosso (duplicava il firmware).
+
+    Questa funzione elimina tali entità dal registry al primo avvio
+    dopo l'aggiornamento, così l'utente non si ritrova più la lista
+    di entità fantasma "Non disponibile".
+    """
+    registry = er.async_get(hass)
+    stale_platforms = {"camera"}
+    stale_unique_id_suffixes = {"_uptime_info"}
+    removed = 0
+    for entity in list(registry.entities.values()):
+        if entity.config_entry_id != entry.entry_id:
+            continue
+        if entity.platform != DOMAIN:
+            continue
+        should_remove = entity.domain in stale_platforms or any(
+            entity.unique_id.endswith(suffix) for suffix in stale_unique_id_suffixes
+        )
+        if should_remove:
+            registry.async_remove(entity.entity_id)
+            removed += 1
+    if removed:
+        _LOGGER.info("[Setup] Rimosse %d entità obsolete dal registry", removed)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

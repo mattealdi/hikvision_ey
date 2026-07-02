@@ -6,10 +6,11 @@ MANUFACTURER = "Hikvision"
 ATTRIBUTION = "Data provided by Hik-Connect cloud"
 
 # Piattaforme HA abilitate
+# NOTE v0.3.1: piattaforma 'camera' rimossa. Il modello DS-KH7300EY-WTE2
+# non espone RTSP e i canali riportati dal cloud sono 50 placeholder vuoti.
 PLATFORMS: list[str] = [
     "binary_sensor",
     "button",
-    "camera",
     "sensor",
 ]
 

@@ -1,6 +1,6 @@
 """Sensor entities per l'integrazione Hikvision EY.
 
-10 sensor:
+9 sensor:
 - firmware       — versione firmware
 - device_name    — nome dispositivo
 - serial         — numero seriale (breve)
@@ -8,9 +8,8 @@
 - last_call      — ultimo stato chiamata
 - last_event     — ultimo evento (doorbell/call)
 - call_count     — contatore chiamate sessione
-- rssi           — segnale WiFi (dBm)
+- wifi_quality   — qualità WiFi (percentuale 0-100%)
 - wifi_address   — IP locale/WiFi
-- uptime_info    — info uptime (dal cloud)
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfTime
+from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -87,11 +86,13 @@ SENSOR_DESCRIPTIONS: tuple[HikvisionEySensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         value_key="call_count",
     ),
+    # Hik-Connect espone `signal` come percentuale 0-100 (NON dBm),
+    # quindi usiamo unit=% e device_class None.
     HikvisionEySensorDescription(
-        key="rssi",
-        translation_key="rssi",
-        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        key="wifi_quality",
+        translation_key="wifi_quality",
+        icon="mdi:wifi",
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         value_key="wifi_signal",
     ),
@@ -100,12 +101,6 @@ SENSOR_DESCRIPTIONS: tuple[HikvisionEySensorDescription, ...] = (
         translation_key="wifi_address",
         icon="mdi:ip-network",
         value_key="local_ip",
-    ),
-    HikvisionEySensorDescription(
-        key="uptime_info",
-        translation_key="uptime_info",
-        icon="mdi:clock-start",
-        value_key="firmware_version",  # placeholder — uptime non esposto direttamente dal cloud
     ),
 )
 
