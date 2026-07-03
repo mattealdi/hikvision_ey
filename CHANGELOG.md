@@ -3,6 +3,25 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.4] - 2026-07-03
+
+### Fixed
+- **[CRITICO] AttributeError su binary_sensor a ogni update** (osservato
+  1984+ occorrenze in 7 ore su v0.3.2/0.3.3): le classi
+  `HikvisionEyDeviceBinarySensor` e `HikvisionEyCallBinarySensor` non
+  assegnavano `self.entity_description = description` nel loro
+  `__init__`, causando `AttributeError: object has no attribute
+  'entity_description'` a ogni ciclo del coordinator. Il resto di HA
+  gestiva graceful il crash ma il log si riempiva e le entità flappavano.
+  **Da v0.3.4 tutti e 4 i binary sensor tornano stabili.**
+- **Backoff progressivo su cloud_verified** (0s / 0.8s / 2.5s, totale ~3.3s):
+  osservato il 3 luglio mattina il firmware del monitor DS-KH7300EY ha
+  risposto `isapi.statusCode=3 subStatusCode=NULLpoint` (crash interno
+  transient) per più di 70 secondi consecutivi. Il retry singolo di
+  v0.3.3 non bastava. Ora 3 tentativi con delay progressivo coprono
+  quasi tutti i casi di NULLpoint.
+- Log dedicato riconosce esplicitamente il caso `NULLpoint`.
+
 ## [0.3.3] - 2026-07-03
 
 ### Fixed

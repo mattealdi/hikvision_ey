@@ -121,6 +121,21 @@ class HikvisionEyBinarySensor(HikvisionEyEntity, BinarySensorEntity):
 class HikvisionEyDeviceBinarySensor(HikvisionEyBinarySensor):
     """Binary sensor driven by device coordinator data."""
 
+    def __init__(
+        self,
+        device_coordinator: HikvisionEyDeviceCoordinator,
+        device_serial: str,
+        description: HikvisionEyBinarySensorDescription,
+    ) -> None:
+        """Initialize the device binary sensor.
+
+        v0.3.4: Fix critico — la versione precedente non assegnava
+        `self.entity_description`, causando AttributeError a ogni update
+        del coordinator (1984+ occorrenze osservate in 7 ore su v0.3.2/3).
+        """
+        super().__init__(device_coordinator, device_serial, description.key)
+        self.entity_description = description
+
     @property
     def is_on(self) -> bool | None:
         """Return sensor state based on device data."""
@@ -157,8 +172,13 @@ class HikvisionEyCallBinarySensor(HikvisionEyBinarySensor):
             call_coordinator: Call status coordinator.
             device_serial: Device serial.
             description: Entity description.
+
+        v0.3.4: Fix critico — la versione precedente non assegnava
+        `self.entity_description`, causando AttributeError a ogni update
+        del coordinator.
         """
         super().__init__(device_coordinator, device_serial, description.key)
+        self.entity_description = description
         self._call_coordinator = call_coordinator
 
     async def async_added_to_hass(self) -> None:
