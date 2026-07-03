@@ -151,28 +151,36 @@ class StrategyVerified:
             serial,
         )
 
-        # SICUREZZA CANCELLETTO PEDONALE (v0.4.0):
-        # 8 tentativi entro ~14s totali (0, 2, 4, 6, 8, 10, 12, 14).
-        # Il timeout hard del coordinator è 15s. La finestra copre la maggior
-        # parte dei NULLpoint transient/medi del firmware V2.2.56, senza però
-        # arrivare a durate che permettano all'utente di scendere, aprire con
-        # la chiave, entrare e richiudere (>20s stimati). Se durante questi
-        # 14s l'utente scende alla porta, può premere il bottone "Annulla
-        # Apertura" da HA per interrompere immediatamente i retry.
+        # SICUREZZA CANCELLETTO PEDONALE (v0.4.1):
+        # Retry adattivo: primi 5 tentativi con delay 2s (0,2,4,6,8),
+        # poi delay 3s fino a un cap fisico di 45 tentativi (~130s).
+        # Il vero cap operativo è imposto dal coordinator:
+        #   - safety cap 90s: dopo 90s il task viene cancellato comunque
+        #   - auto-cancel su EVENT_CALL_ENDED (rispondi al citofono → stop)
+        #   - bottone "Annulla Apertura" per interruzione manuale immediata
         # Cancelletto a chiusura manuale: nessuna richiusura automatica,
-        # quindi l'annullamento è la protezione principale.
-        RETRY_DELAYS = [0, 2, 4, 6, 8, 10, 12, 14]
+        # quindi la protezione principale è l'annullamento (manuale o auto).
+        MAX_ATTEMPTS = 45
         last_error: str | None = None
         last_meta: int | None = None
         last_http: int | None = None
         last_isapi_status: int | None = None
 
-        for attempt, delay in enumerate(RETRY_DELAYS, start=1):
+        def _delay_for(idx: int) -> int:
+            """Delay progressivo: 2s per i primi 5, poi 3s."""
+            if idx == 1:
+                return 0
+            if idx <= 5:
+                return 2
+            return 3
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            delay = _delay_for(attempt)
             if delay > 0:
                 await asyncio.sleep(delay)
                 _LOGGER.info(
                     "[Verified] Retry %d/%d after transient error (last: meta=%s isapi=%s)",
-                    attempt, len(RETRY_DELAYS), last_meta, last_isapi_status,
+                    attempt, MAX_ATTEMPTS, last_meta, last_isapi_status,
                 )
 
             try:

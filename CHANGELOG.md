@@ -3,6 +3,50 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.4.1] - 2026-07-03
+
+### Changed (breaking sul comportamento apertura)
+- **Cap safety esteso a 90 s** (era 15 s in v0.4.0). Copre anche i
+  NULLpoint cronici da 30-40 s osservati con firmware V2.2.56.
+- **Retry adattivo lato `StrategyVerified`**: 2 s per i primi 5 tentativi
+  (0/2/4/6/8), poi 3 s fino a un cap fisico di 45 tentativi (~130 s
+  teorici, ma il coordinator taglia a 90 s comunque).
+- **Cooldown post-fail alzato a 60 s** (era 30 s): se il tentativo
+  fallisce, per 60 s il bottone Apri ignora nuove pressioni.
+- **Timestamp guard e timeout 15 s: definitivamente abbandonati.**
+  La protezione principale del cancelletto pedonale a chiusura manuale
+  è ora il bottone Annulla + il cap 90 s + l'auto-cancel su risposta
+  citofono.
+
+### Added
+- **Auto-cancel su risposta citofono**: quando arriva `EVENT_CALL_ENDED`
+  (chiamata terminata) e c'è un'apertura in flight, il coordinator
+  chiama automaticamente `cancel_unlock()`. Scenario tipico: suona il
+  campanello, premi Apri sull'HA, ma nel frattempo scendi al citofono
+  e rispondi in vivavoce — il retry si ferma da solo senza doverti
+  ricordare del bottone Annulla.
+
+### Rationale
+Test in campo v0.4.0 (3/7/2026): la finestra 15 s si è rivelata ancora
+un tetto troppo basso per il NULLpoint cronico. L'utente ha accettato
+esplicitamente il trade-off "finestra lunga in cambio di controllo
+manuale": preferisce che HA continui a provarci per un tempo utile e
+gestisce i casi limite con il bottone Annulla + auto-cancel.
+
+90 s è stato scelto come cap perché:
+- È oltre il peggior NULLpoint mai osservato (30-40 s) → nessuna
+  apertura legittima viene tagliata.
+- Sotto la soglia "me ne sono dimenticato": entro 90 s l'utente non
+  ha ancora avuto tempo di aprire con la chiave, uscire, chiudere e
+  allontanarsi — il rischio di riapertura tardiva su cancelletto
+  incustodito è marginale.
+- È comunque un cap fisico, non un'attesa infinita: se il cloud
+  Hik-Connect si impianta, dopo 90 s HA smette di provarci.
+
+Questa è la strategia definitiva finché non arriva il firmware
+V2.2.66 dal supporto Hikvision. Alla ricezione: v0.4.2 con retry
+drasticamente ridotta (2-3 tentativi) e cap riportato a 5 s.
+
 ## [0.4.0] - 2026-07-03
 
 ### Security / Safety

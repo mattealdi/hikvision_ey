@@ -219,7 +219,17 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         _LOGGER.info("[DeviceCoordinator] Preferred strategy saved: %s", strategy)
 
     # ------------------------------------------------------------------
-    # v0.4.0 — Apertura sicura del cancelletto (revisione dopo v0.3.7)
+    # v0.4.1 — Apertura sicura del cancelletto (revisione dopo v0.4.0)
+    # ------------------------------------------------------------------
+    #
+    # Novità v0.4.1: dopo test in campo v0.4.0 la finestra 15s si è
+    # rivelata ancora insufficiente su NULLpoint cronici. Nuova strategia:
+    #  - Cap safety 90s (era 15s): oltre è sicuro fermarsi comunque.
+    #  - Retry adattivo lato strategy: 2s x5, poi 3s, fino a 45 tentativi.
+    #  - Cooldown post-fail 60s (era 30s): più tempo tra tentativi falliti.
+    #  - Auto-cancel su EVENT_CALL_ENDED: se rispondi al citofono mentre
+    #    l'apertura è in corso, il task viene cancellato automaticamente.
+    #  - Bottone Annulla resta la protezione manuale primaria.
     # ------------------------------------------------------------------
     #
     # Contesto:
@@ -253,9 +263,14 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
     # con la finestra retry a 14s non ha più senso, la protezione principale
     # è ora il bottone Annulla + cooldown 30s.
 
-    _UNLOCK_TIMEOUT_S: float = 15.0
+    # v0.4.1: cap safety a 90s (era timeout hard 15s in v0.4.0). Oltre
+    # 90s smettiamo comunque di provarci, per evitare che HA riapra il
+    # cancelletto ore dopo che l'utente ha già aperto con la chiave e
+    # ha dimenticato di premere Annulla. 90s è oltre il peggior NULLpoint
+    # cronico mai osservato (30-40s), quindi non taglia aperture legittime.
+    _UNLOCK_TIMEOUT_S: float = 90.0
     _UNLOCK_COOLDOWN_OK_S: float = 3.0
-    _UNLOCK_COOLDOWN_FAIL_S: float = 30.0
+    _UNLOCK_COOLDOWN_FAIL_S: float = 60.0
 
     @property
     def is_unlocking(self) -> bool:

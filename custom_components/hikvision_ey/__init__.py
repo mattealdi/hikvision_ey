@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 
 from .api.exceptions import AuthError, CaptchaRequired, HikvisionEyError
-from .const import DOMAIN, EVENT_DOORBELL_PRESSED, PLATFORMS
+from .const import DOMAIN, EVENT_CALL_ENDED, EVENT_DOORBELL_PRESSED, PLATFORMS
 from .coordinator import HikvisionEyCallStatusCoordinator, HikvisionEyDeviceCoordinator
 from .services import async_register_services, async_unregister_services
 
@@ -74,6 +74,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(
         hass.bus.async_listen(EVENT_DOORBELL_PRESSED, _on_doorbell)
+    )
+
+    # v0.4.1: auto-cancel dell'apertura in corso quando la chiamata
+    # termina (utente ha risposto fisicamente dal citofono / campanello
+    # smesso di suonare). Se in quel momento c'è un unlock in flight,
+    # significa che l'utente sta gestendo la persona dall'interfono e
+    # probabilmente andrà lui ad aprire: fermiamo i retry.
+    async def _on_call_ended(event) -> None:  # noqa: ANN001
+        if device_coordinator.is_unlocking:
+            _LOGGER.info(
+                "[Setup] Chiamata terminata mentre apertura in corso — auto-cancel"
+            )
+            await device_coordinator.cancel_unlock()
+
+    entry.async_on_unload(
+        hass.bus.async_listen(EVENT_CALL_ENDED, _on_call_ended)
     )
 
     # Forward alle piattaforme
