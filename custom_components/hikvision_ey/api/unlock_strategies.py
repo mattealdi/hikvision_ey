@@ -19,7 +19,6 @@ StrategyLocal è stata rimossa per non generare log fuorvianti.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING, Any, Protocol
@@ -151,102 +150,73 @@ class StrategyVerified:
             serial,
         )
 
-        # SICUREZZA CANCELLETTO PEDONALE (v0.4.1):
-        # Retry adattivo: primi 5 tentativi con delay 2s (0,2,4,6,8),
-        # poi delay 3s fino a un cap fisico di 45 tentativi (~130s).
-        # Il vero cap operativo è imposto dal coordinator:
-        #   - safety cap 90s: dopo 90s il task viene cancellato comunque
-        #   - auto-cancel su EVENT_CALL_ENDED (rispondi al citofono → stop)
-        #   - bottone "Annulla Apertura" per interruzione manuale immediata
-        # Cancelletto a chiusura manuale: nessuna richiusura automatica,
-        # quindi la protezione principale è l'annullamento (manuale o auto).
-        MAX_ATTEMPTS = 45
-        last_error: str | None = None
-        last_meta: int | None = None
-        last_http: int | None = None
-        last_isapi_status: int | None = None
+        # SINGLE-SHOT (v0.4.2 — ripristino comportamento v0.3.2).
+        # ------------------------------------------------------------------
+        # REGRESSIONE CORRETTA: la v0.4.1 aveva un `for attempt in range(1, 46)`
+        # con delay 2s/3s che monopolizzava fino a ~90s ritentando la STESSA
+        # richiesta condannata al NULLpoint (subStatusCode=NULLpoint,
+        # errorCode=805306388 sul firmware V2.2.56). Conseguenza: UnlockManager
+        # non arrivava MAI a provare la cascata di fallback A4→A3→A2→A1, che è
+        # ciò che in v0.3.2 apre effettivamente il relè. Log campo 3/7 12:23-24:
+        # 15 tentativi identici in 84s, tutti NULLpoint, poi cap → nessuna apertura.
+        #
+        # Fix: UN SOLO POST. Se fallisce, ritorna SUBITO success=False così
+        # UnlockManager passa immediatamente alla strategia successiva. Nessun
+        # retry interno alla strategia: il tempo va speso provando chiavi
+        # diverse, non ribattendo su quella condannata.
+        try:
+            resp = await self._client.raw_request_form("POST", url, form)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("[Verified] Request failed: %s", exc)
+            return UnlockResult(success=False, strategy=self.name, error=str(exc))
 
-        def _delay_for(idx: int) -> int:
-            """Delay progressivo: 2s per i primi 5, poi 3s."""
-            if idx == 1:
-                return 0
-            if idx <= 5:
-                return 2
-            return 3
+        meta_code = _extract_meta_code(resp)
+        http_status = resp.get("_http_status")
+        isapi_status, isapi_substatus = _extract_isapi_status(resp)
 
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            delay = _delay_for(attempt)
-            if delay > 0:
-                await asyncio.sleep(delay)
-                _LOGGER.info(
-                    "[Verified] Retry %d/%d after transient error (last: meta=%s isapi=%s)",
-                    attempt, MAX_ATTEMPTS, last_meta, last_isapi_status,
-                )
+        cloud_ok = _is_success(meta_code)
+        isapi_ok = isapi_status is not None and isapi_status in ISAPI_SUCCESS_STATUS_CODES
+        success = cloud_ok and (isapi_ok or isapi_status is None)
 
-            try:
-                resp = await self._client.raw_request_form("POST", url, form)
-            except Exception as exc:
-                last_error = str(exc)
-                _LOGGER.warning("[Verified] Attempt %d request failed: %s", attempt, exc)
-                continue
+        if success:
+            _LOGGER.info(
+                "[Verified] Unlock CONFIRMED for device %s door %d (channel %s)",
+                serial, door_index, form["channelNo"],
+            )
+            return UnlockResult(
+                success=True,
+                strategy=self.name,
+                meta_code=meta_code,
+                http_status=http_status,
+            )
 
-            meta_code = _extract_meta_code(resp)
-            http_status = resp.get("_http_status")
-            isapi_status, isapi_substatus = _extract_isapi_status(resp)
-
-            cloud_ok = _is_success(meta_code)
-            isapi_ok = isapi_status is not None and isapi_status in ISAPI_SUCCESS_STATUS_CODES
-            success = cloud_ok and (isapi_ok or isapi_status is None)
-
-            # Log SEMPRE il payload di risposta (troncato) quando NON è successo.
-            # Serve per diagnosticare cosa sta rispondendo il cloud.
-            if not success:
-                data_snippet = str(resp.get("data", ""))[:300]
-                meta_msg = ""
-                try:
-                    meta_msg = str(resp.get("meta", {}).get("message", ""))[:200]
-                except Exception:  # noqa: BLE001
-                    pass
-                _LOGGER.warning(
-                    "[Verified] Attempt %d NOT confirmed: http=%s meta.code=%s meta.msg=%r isapi.statusCode=%s subStatus=%s data=%r",
-                    attempt, http_status, meta_code, meta_msg,
-                    isapi_status, isapi_substatus, data_snippet,
-                )
-            else:
-                _LOGGER.info(
-                    "[Verified] Unlock CONFIRMED for device %s door %d (channel %s, attempt %d)",
-                    serial, door_index, form["channelNo"], attempt,
-                )
-                return UnlockResult(
-                    success=True,
-                    strategy=self.name,
-                    meta_code=meta_code,
-                    http_status=http_status,
-                )
-
-            # Log dedicato per il caso NULLpoint (crash transient firmware
-            # del monitor). Non aumentiamo il backoff per motivi di sicurezza:
-            # meglio fallire in fretta che riaprire il cancello dopo che
-            # l'utente ha già aperto manualmente con la chiave.
-            if isapi_substatus and "NULLpoint" in str(isapi_substatus):
-                _LOGGER.info(
-                    "[Verified] Firmware returned NULLpoint (transient crash) — quick retry only"
-                )
-
-            last_meta = meta_code
-            last_http = http_status
-            last_isapi_status = isapi_status
-            last_error = (
-                f"meta.code={meta_code}, isapi.statusCode={isapi_status}, "
-                f"subStatus={isapi_substatus}"
+        # Fallita: log diagnostico completo + gestione NULLpoint, poi ESCE
+        # subito per lasciare spazio alla cascata di fallback.
+        data_snippet = str(resp.get("data", ""))[:300]
+        meta_msg = ""
+        try:
+            meta_msg = str(resp.get("meta", {}).get("message", ""))[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        _LOGGER.warning(
+            "[Verified] NOT confirmed: http=%s meta.code=%s meta.msg=%r isapi.statusCode=%s subStatus=%s data=%r",
+            http_status, meta_code, meta_msg, isapi_status, isapi_substatus, data_snippet,
+        )
+        if isapi_substatus and "NULLpoint" in str(isapi_substatus):
+            _LOGGER.info(
+                "[Verified] Firmware NULLpoint (bug V2.2.56, fix atteso V2.2.66) — "
+                "single-shot fallito, cedo subito alla cascata A4→A3→A2→A1"
             )
 
         return UnlockResult(
             success=False,
             strategy=self.name,
-            meta_code=last_meta,
-            http_status=last_http,
-            error=last_error or "unknown",
+            meta_code=meta_code,
+            http_status=http_status,
+            error=(
+                f"meta.code={meta_code}, isapi.statusCode={isapi_status}, "
+                f"subStatus={isapi_substatus}"
+            ),
         )
 
 

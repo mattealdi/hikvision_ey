@@ -219,38 +219,43 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         _LOGGER.info("[DeviceCoordinator] Preferred strategy saved: %s", strategy)
 
     # ------------------------------------------------------------------
-    # v0.4.1 — Apertura sicura del cancelletto (revisione dopo v0.4.0)
+    # v0.4.2 — Apertura sicura del cancelletto (fix regressione v0.4.1)
     # ------------------------------------------------------------------
     #
-    # Novità v0.4.1: dopo test in campo v0.4.0 la finestra 15s si è
-    # rivelata ancora insufficiente su NULLpoint cronici. Nuova strategia:
-    #  - Cap safety 90s (era 15s): oltre è sicuro fermarsi comunque.
-    #  - Retry adattivo lato strategy: 2s x5, poi 3s, fino a 45 tentativi.
-    #  - Cooldown post-fail 60s (era 30s): più tempo tra tentativi falliti.
-    #  - Auto-cancel su EVENT_CALL_ENDED: se rispondi al citofono mentre
-    #    l'apertura è in corso, il task viene cancellato automaticamente.
-    #  - Bottone Annulla resta la protezione manuale primaria.
+    # PERCHÉ v0.4.2: in v0.4.1 il cancelletto NON apriva. La causa NON era
+    # il firmware né il wrapper in sé, ma il RETRY LOOP dentro
+    # StrategyVerified (`for attempt in range(1, 46)`, delay 2s/3s): teneva
+    # occupato il coordinator fino a ~90s ribattendo sulla stessa richiesta
+    # condannata al NULLpoint, così UnlockManager non arrivava MAI a provare
+    # la cascata di fallback A4→A3→A2→A1 — che è ciò che in v0.3.2 apre il
+    # relè. v0.4.2 rimuove quel loop: StrategyVerified torna single-shot,
+    # fallisce in ~500ms e cede subito la mano alla cascata rapida.
+    #
+    # Strategia v0.4.2 (wrapper snellito):
+    #  - Cap safety 15s (era 90s): la cascata single-shot dura ~3-5s.
+    #  - Nessun retry adattivo (rimosso): il tempo si spende provando
+    #    chiavi diverse, non ribattendo su quella sbagliata.
+    #  - Cooldown post-fail 20s (era 60s), post-ok 3s (invariato).
+    #  - Auto-cancel su EVENT_CALL_ENDED + bottone Annulla: invariati.
     # ------------------------------------------------------------------
     #
     # Contesto:
     # - Firmware V2.2.56 build 250306 affetto da bug NULLpoint sull'endpoint
-    #   PUT /ISAPI/AccessControl/RemoteControl/door/1: risposte HTTP 200 dal
-    #   cloud ma il monitor internamente crasha, l'apertura reale avviene
-    #   solo dopo 3-40s di tentativi ripetuti.
-    # - Cancelletto pedonale a chiusura MANUALE (nessuna richiusura automatica):
-    #   una riapertura tardiva dopo che l'utente ha chiuso a mano lascerebbe
-    #   il cancelletto aperto, condizione inaccettabile.
-    # - Utente stima 20-30s per il percorso "scendo con chiave -> apro ->
-    #   entro -> richiudo". Finestra retry di 14s sta strettamente sotto
-    #   questa soglia: se il bottone HA riesce entro 14s, l'utente non ha
-    #   ancora finito di aprire a mano.
+    #   PUT /ISAPI/AccessControl/RemoteControl/door/1: HTTP 200 dal cloud ma
+    #   subStatusCode=NULLpoint errorCode=805306388. Fix atteso su V2.2.66
+    #   (mail già inviata a support.it@hikvision.com). Nel frattempo la via
+    #   che apre è la cascata di chiavi legacy A4→A3→A2→A1.
+    # - Porte TCP monitor (80/443/554/8000/8080/8200) tutte CHIUSE
+    #   (verificato 3/7/2026): STRATEGY_LOCAL non attivabile, già rimossa.
+    # - Cancelletto pedonale a chiusura MANUALE (nessuna richiusura
+    #   automatica): con cap 15s e single-shot non c'è finestra di
+    #   riapertura tardiva dopo che l'utente ha aperto con la chiave.
     #
     # Regole implementate:
-    #  1) Timeout hard 15s: dopo 15s la richiesta viene abbandonata.
-    #  2) Retry ogni 2s dentro StrategyVerified (8 tentativi in 14s).
-    #  3) Cooldown 30s dopo un fallimento: dopo un fail, per 30s il bottone
-    #     Apri ignora nuove pressioni (per evitare che l'utente stia già
-    #     aprendo a mano e prema di nuovo per sbaglio).
+    #  1) Cap safety 15s: dopo 15s la richiesta viene abbandonata.
+    #  2) Nessun retry interno alle strategie: single-shot + cascata.
+    #  3) Cooldown 20s dopo un fallimento: evita doppio-click mentre l'utente
+    #     si sta già muovendo verso la chiave.
     #  4) Cooldown 3s dopo un successo: previene doppio click accidentale.
     #  5) Serializzazione via asyncio.Lock: mai due open_gate in flight.
     #  6) Task cancellabile: il coordinator memorizza il task in _current_
@@ -259,18 +264,23 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
     #  7) Binary sensor "Apertura in Corso" (attributo self._is_unlocking)
     #     riflette lo stato per la UI e le automazioni.
     #
-    # Il timestamp guard v0.3.6 (rigetto risposte >5s) è stato RIMOSSO:
-    # con la finestra retry a 14s non ha più senso, la protezione principale
-    # è ora il bottone Annulla + cooldown 30s.
+    # Il timestamp guard v0.3.6 (rigetto risposte >5s) resta RIMOSSO: con
+    # cascata single-shot e cap 15s la protezione è già nella finestra breve,
+    # più il bottone Annulla + auto-cancel.
 
-    # v0.4.1: cap safety a 90s (era timeout hard 15s in v0.4.0). Oltre
-    # 90s smettiamo comunque di provarci, per evitare che HA riapra il
-    # cancelletto ore dopo che l'utente ha già aperto con la chiave e
-    # ha dimenticato di premere Annulla. 90s è oltre il peggior NULLpoint
-    # cronico mai osservato (30-40s), quindi non taglia aperture legittime.
-    _UNLOCK_TIMEOUT_S: float = 90.0
+    # v0.4.2: wrapper SNELLITO. Con StrategyVerified tornata single-shot,
+    # la cascata completa cloud_verified→A4→A3→A2→A1 dura ~3-5s: non serve
+    # più il cap 90s della v0.4.1 (che copriva il retry loop, ora rimosso).
+    #  - Cap safety 15s (era 90s): margine ampio per la cascata single-shot,
+    #    ma taglia netto qualsiasi apertura tardiva su cancelletto a chiusura
+    #    manuale.
+    #  - Cooldown post-fail 20s (era 60s): evita il doppio-click accidentale
+    #    mentre l'utente si sta già muovendo verso la chiave, senza tenere il
+    #    bottone "morto" per un minuto intero.
+    #  - Cooldown post-ok 3s (invariato): previene la doppia pressione.
+    _UNLOCK_TIMEOUT_S: float = 15.0
     _UNLOCK_COOLDOWN_OK_S: float = 3.0
-    _UNLOCK_COOLDOWN_FAIL_S: float = 60.0
+    _UNLOCK_COOLDOWN_FAIL_S: float = 20.0
 
     @property
     def is_unlocking(self) -> bool:

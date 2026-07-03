@@ -3,6 +3,44 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.4.2] - 2026-07-03
+
+### Fixed (regressione critica: il cancelletto non apriva)
+- **Rimosso il retry loop 45x in `StrategyVerified`** (`for attempt in
+  range(1, 46)`, delay 2s/3s). Era la causa primaria: monopolizzava fino a
+  ~90s ribattendo sulla stessa richiesta condannata al NULLpoint, così
+  `UnlockManager` non arrivava MAI a provare la cascata di fallback
+  A4→A3→A2→A1 — che è ciò che apre effettivamente il relè.
+- **Ripristinato il comportamento single-shot v0.3.2** per la strategia
+  `cloud_verified`: 1 POST, se fallisce ritorna subito e cede la mano alla
+  strategia successiva. Il tempo si spende provando chiavi diverse, non
+  ritentando quella sbagliata.
+
+### Root cause
+- In v0.3.2 il cancelletto apre perché `cloud_verified` fallisce con
+  NULLpoint in ~500ms e parte subito la cascata A4→A3→A2→A1: una di queste
+  "chiavi" attiva il relè.
+- In v0.4.1 la cascata non parte mai: `StrategyVerified` blocca il
+  coordinator per ~90s, poi il cap chiude tutto senza fallback.
+- Log campo 3/7/2026 12:23-12:24: 15 tentativi identici in 84s, tutti
+  NULLpoint, nessuna apertura.
+- Non è un difetto firmware irrecuperabile: è una regressione software
+  (retry loop) introdotta nella linea 0.4.x.
+
+### Changed
+- **`open_gate_safely` snellito**: cap safety 15s (era 90s), cooldown
+  post-fail 20s (era 60s), cooldown post-ok 3s (invariato). Rimossa ogni
+  logica di retry adattivo. La cascata single-shot completa dura ~3-5s.
+- Cascata confermata: `cloud_verified → A4 → A3 → A2 → A1`. `STRATEGY_LOCAL`
+  resta rimossa (porte TCP monitor tutte chiuse, verificato 3/7/2026).
+
+### Invariato (feature safety mantenute)
+- Bottone "Annulla Apertura" separato, servizi `cancel_unlock` e
+  `reset_stats`.
+- Auto-cancel su `EVENT_CALL_ENDED`, listener `EVENT_DOORBELL_PRESSED`.
+- Binary sensor `unlock_in_progress`, sensori Chiamate Oggi/Totali,
+  sensori diagnostici apertura, dump esteso in diagnostics.
+
 ## [0.4.1] - 2026-07-03
 
 ### Changed (breaking sul comportamento apertura)

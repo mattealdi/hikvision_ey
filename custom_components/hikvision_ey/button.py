@@ -167,7 +167,8 @@ class HikvisionEyButton(HikvisionEyEntity, ButtonEntity):
                     channel = device.cameras[0].channel_number
 
                 # v0.4.0: passa sempre dal wrapper safety-aware del coordinator.
-                # Applica cooldown differenziato, timeout hard 15s, task cancellabile.
+                # v0.4.2: cap safety 15s, cooldown differenziato (3s ok / 20s fail),
+                # task cancellabile via bottone Annulla / auto-cancel.
                 result = await coordinator.open_gate_safely(
                     serial=serial,
                     channel=channel,
