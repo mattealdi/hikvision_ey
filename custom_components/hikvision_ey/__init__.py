@@ -5,12 +5,12 @@ import logging
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 
 from .api.exceptions import AuthError, CaptchaRequired, HikvisionEyError
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, EVENT_DOORBELL_PRESSED, PLATFORMS
 from .coordinator import HikvisionEyCallStatusCoordinator, HikvisionEyDeviceCoordinator
 from .services import async_register_services, async_unregister_services
 
@@ -63,6 +63,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "device_coordinator": device_coordinator,
         "call_coordinator": call_coordinator,
     }
+
+    # v0.4.0: incrementa i contatori Chiamate Oggi/Totali a ogni pressione
+    # del campanello. L'evento EVENT_DOORBELL_PRESSED viene emesso dal
+    # CallStatusCoordinator solo su transizione idle -> ringing, quindi
+    # è un singolo incremento per chiamata (no rimbalzi).
+    @callback
+    def _on_doorbell(event) -> None:  # noqa: ANN001
+        device_coordinator.increment_call_count()
+
+    entry.async_on_unload(
+        hass.bus.async_listen(EVENT_DOORBELL_PRESSED, _on_doorbell)
+    )
 
     # Forward alle piattaforme
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

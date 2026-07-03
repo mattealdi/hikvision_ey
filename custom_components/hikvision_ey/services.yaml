@@ -85,3 +85,16 @@ reconnect:
   description: >
     Force a full re-login to the Hik-Connect cloud. Useful after password
     change or when the integration is stuck.
+
+cancel_unlock:
+  name: Cancel Unlock / Annulla Apertura
+  description: >
+    Cancel an in-flight open_gate request immediately. Same behavior as the
+    "Annulla Apertura" button. Useful if the user has already opened the gate
+    manually with the key and does not want the pending retries to re-open it.
+
+reset_stats:
+  name: Reset Statistics / Azzera Statistiche
+  description: >
+    Reset the daily/total call counters and the last-10 unlock history.
+    Does not touch the preferred unlock strategy nor the cloud session.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -123,20 +124,35 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5
 
-        # ---- v0.3.6: safety layer per apertura cancelletto ------------------
+        # ---- v0.4.0: safety layer per apertura cancelletto ------------------
         # Serializza le richieste di apertura (una alla volta) + cooldown per
-        # evitare doppie pressioni + timestamp guard per rigettare risposte
-        # tardive del cloud dopo che l'utente ha già aperto a mano con chiave.
+        # evitare doppie pressioni + task cancellabile via bottone "Annulla".
+        # Il cancelletto ha chiusura MANUALE (nessuna richiusura automatica),
+        # quindi il bottone Annulla è la protezione principale.
         self._unlock_lock = asyncio.Lock()
-        self._last_unlock_press_ts: float = 0.0  # monotonic
+        self._last_unlock_end_ts: float = 0.0     # monotonic, fine ultima apertura
+        self._last_unlock_success: bool = False   # esito ultima apertura
+        self._current_unlock_task: asyncio.Task | None = None  # task in flight
+        self._is_unlocking: bool = False          # True durante l'attesa
+
         # Stats esposti come sensori diagnostici (aggiornati a ogni pressione).
         self.last_unlock_stats: dict[str, Any] = {
-            "esito": None,       # 'ok' | 'bug_nullpoint' | 'timeout' | 'errore' | 'ignorato_cooldown'
-            "tentativi": None,   # int
+            "esito": None,       # 'ok' | 'bug_nullpoint' | 'timeout' | 'errore' | 'ignorato_cooldown' | 'annullato'
+            "tentativi": None,   # int (attualmente non popolato da unlock_manager)
             "durata_ms": None,   # int
             "strategia": None,   # str | None
             "timestamp": None,   # iso str
         }
+
+        # Storico ultime 10 aperture (diagnostica esteso). Ogni entry:
+        # {"esito": str, "durata_ms": int, "strategia": str|None, "timestamp": iso}
+        self.unlock_history: deque[dict[str, Any]] = deque(maxlen=10)
+
+        # Contatori chiamate (per sensori Chiamate Oggi/Totali).
+        # Aggiornati dai listener eventi doorbell/call in __init__.py.
+        self.call_count_today: int = 0
+        self.call_count_total: int = 0
+        self._call_count_day: str | None = None  # 'YYYY-MM-DD' per rollover
 
     async def _async_update_data(self) -> list[DeviceInfo]:
         """Fetch updated device list from cloud.
@@ -203,29 +219,71 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         _LOGGER.info("[DeviceCoordinator] Preferred strategy saved: %s", strategy)
 
     # ------------------------------------------------------------------
-    # v0.3.6 — Apertura sicura del cancelletto
+    # v0.4.0 — Apertura sicura del cancelletto (revisione dopo v0.3.7)
     # ------------------------------------------------------------------
     #
-    # Requisiti di sicurezza (utente Matteo, 3/7/2026):
-    # "Se non apre con il bottone e in 2,5 s apro con la chiave e richiudo,
-    #  il cancelletto potrebbe riaprirsi?"
+    # Contesto:
+    # - Firmware V2.2.56 build 250306 affetto da bug NULLpoint sull'endpoint
+    #   PUT /ISAPI/AccessControl/RemoteControl/door/1: risposte HTTP 200 dal
+    #   cloud ma il monitor internamente crasha, l'apertura reale avviene
+    #   solo dopo 3-40s di tentativi ripetuti.
+    # - Cancelletto pedonale a chiusura MANUALE (nessuna richiusura automatica):
+    #   una riapertura tardiva dopo che l'utente ha chiuso a mano lascerebbe
+    #   il cancelletto aperto, condizione inaccettabile.
+    # - Utente stima 20-30s per il percorso "scendo con chiave -> apro ->
+    #   entro -> richiudo". Finestra retry di 14s sta strettamente sotto
+    #   questa soglia: se il bottone HA riesce entro 14s, l'utente non ha
+    #   ancora finito di aprire a mano.
     #
     # Regole implementate:
-    #  1) Cooldown 3s: due pressioni ravvicinate non generano due aperture,
-    #     la seconda viene ignorata.
-    #  2) Serializzazione: le richieste sono seriali (asyncio.Lock), impossibile
-    #     avere due open_gate in flight contemporaneamente.
-    #  3) Timestamp guard >5s: se la strategia impiega più di 5s a tornare
-    #     (retry esteso, ritardi rete), il risultato positivo viene RIGETTATO
-    #     e NON viene esposto come successo, perché nel frattempo l'utente può
-    #     essersi mosso ad aprire a mano.
-    #  4) Finestra retry stretta (2s totali) implementata dentro StrategyVerified.
+    #  1) Timeout hard 15s: dopo 15s la richiesta viene abbandonata.
+    #  2) Retry ogni 2s dentro StrategyVerified (8 tentativi in 14s).
+    #  3) Cooldown 30s dopo un fallimento: dopo un fail, per 30s il bottone
+    #     Apri ignora nuove pressioni (per evitare che l'utente stia già
+    #     aprendo a mano e prema di nuovo per sbaglio).
+    #  4) Cooldown 3s dopo un successo: previene doppio click accidentale.
+    #  5) Serializzazione via asyncio.Lock: mai due open_gate in flight.
+    #  6) Task cancellabile: il coordinator memorizza il task in _current_
+    #     unlock_task; il bottone "Annulla Apertura" chiama cancel_unlock()
+    #     che invoca task.cancel() istantaneamente.
+    #  7) Binary sensor "Apertura in Corso" (attributo self._is_unlocking)
+    #     riflette lo stato per la UI e le automazioni.
     #
-    # Insieme queste regole garantiscono che nessuna apertura possa avvenire
-    # "a sorpresa" oltre i 5 secondi dalla pressione esplicita del bottone.
+    # Il timestamp guard v0.3.6 (rigetto risposte >5s) è stato RIMOSSO:
+    # con la finestra retry a 14s non ha più senso, la protezione principale
+    # è ora il bottone Annulla + cooldown 30s.
 
-    _UNLOCK_COOLDOWN_S: float = 3.0
-    _UNLOCK_MAX_ELAPSED_S: float = 5.0
+    _UNLOCK_TIMEOUT_S: float = 15.0
+    _UNLOCK_COOLDOWN_OK_S: float = 3.0
+    _UNLOCK_COOLDOWN_FAIL_S: float = 30.0
+
+    @property
+    def is_unlocking(self) -> bool:
+        """True mentre una richiesta di apertura è in corso."""
+        return self._is_unlocking
+
+    async def cancel_unlock(self) -> bool:
+        """Annulla l'apertura in corso, se esiste.
+
+        Chiamata dal bottone "Annulla Apertura" e dal servizio
+        `hikvision_ey.cancel_unlock`. Cancella il task asyncio in flight
+        (i tentativi in corso vengono interrotti) e forza esito="annullato".
+
+        Returns:
+            True se un task era in corso ed è stato annullato, False altrimenti.
+        """
+        task = self._current_unlock_task
+        if task is None or task.done():
+            _LOGGER.info("[Unlock] cancel_unlock: nessuna apertura in corso")
+            return False
+
+        _LOGGER.warning("[Unlock] ANNULLAMENTO richiesto dall'utente — cancello task in flight")
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        return True
 
     async def open_gate_safely(
         self,
@@ -234,23 +292,34 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         lock_index: int = 0,
         strategy: str = "auto",
     ) -> UnlockResult:
-        """Open gate with safety guards (cooldown + timestamp).
+        """Open gate with safety guards.
 
-        Ritorna sempre un UnlockResult; solleva UnlockFailed solo se il
-        cloud rifiuta tutte le strategie.
+        Applica:
+        - Cooldown 30s dopo fallimento / 3s dopo successo
+        - Timeout hard 15s
+        - Task cancellabile via cancel_unlock()
+        - Aggiornamento stats + storico + stato is_unlocking
+
+        Ritorna sempre un UnlockResult. Non solleva UnlockFailed direttamente:
+        gli errori terminali sono catturati e trasformati in result.success=False
+        per lasciare al chiamante (button/service) la scelta se rilanciare.
         """
         import time
         loop_time = time.monotonic
 
         press_ts = loop_time()
 
-        # 1) Cooldown 3s tra pressioni consecutive
-        elapsed_since_prev = press_ts - self._last_unlock_press_ts
-        if elapsed_since_prev < self._UNLOCK_COOLDOWN_S:
+        # 1) Cooldown differenziato: 30s dopo fail, 3s dopo ok
+        cooldown = (
+            self._UNLOCK_COOLDOWN_OK_S if self._last_unlock_success
+            else self._UNLOCK_COOLDOWN_FAIL_S
+        )
+        elapsed_since_end = press_ts - self._last_unlock_end_ts
+        if self._last_unlock_end_ts > 0 and elapsed_since_end < cooldown:
+            residual = cooldown - elapsed_since_end
             _LOGGER.warning(
-                "[Unlock] Cooldown attivo (%.2fs dall'ultima pressione, minimo %.1fs) "
-                "— richiesta ignorata per sicurezza",
-                elapsed_since_prev, self._UNLOCK_COOLDOWN_S,
+                "[Unlock] Cooldown attivo (%.1fs residui, %s) — richiesta ignorata",
+                residual, "post-ok" if self._last_unlock_success else "post-fail",
             )
             self._update_stats(
                 esito="ignorato_cooldown",
@@ -258,107 +327,162 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
                 durata_ms=0,
                 strategia=None,
             )
-            # Non solleva eccezione: torna un result fallito "soft"
             return UnlockResult(
                 success=False,
                 strategy="cooldown",
-                error=f"cooldown {self._UNLOCK_COOLDOWN_S}s attivo",
+                error=f"cooldown {residual:.0f}s residui",
             )
-
-        self._last_unlock_press_ts = press_ts
 
         # 2) Serializzazione + esecuzione con timeout hard
         async with self._unlock_lock:
             start_ts = loop_time()
+            self._is_unlocking = True
+            self.async_update_listeners()  # notifica binary sensor "Apertura in Corso"
+
+            # Creiamo il task come attributo istanza per poterlo cancellare
+            # dal bottone Annulla. asyncio.wait_for + task riferito.
+            unlock_coro = self.unlock_manager.open_gate(
+                serial=serial,
+                channel=channel,
+                lock_index=lock_index,
+                strategy=strategy,
+            )
+            self._current_unlock_task = asyncio.create_task(unlock_coro)
+
             try:
-                # Timeout globale hard = MAX_ELAPSED_S. Se la strategia (con
-                # retry interni) supera questo tempo, cancelliamo il task.
-                # Questo protegge da tempi anomali di rete/cloud.
-                result = await asyncio.wait_for(
-                    self.unlock_manager.open_gate(
-                        serial=serial,
-                        channel=channel,
-                        lock_index=lock_index,
-                        strategy=strategy,
-                    ),
-                    timeout=self._UNLOCK_MAX_ELAPSED_S,
-                )
-            except asyncio.TimeoutError:
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(self._current_unlock_task),
+                        timeout=self._UNLOCK_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    # Timeout hard raggiunto: cancella il task
+                    self._current_unlock_task.cancel()
+                    try:
+                        await self._current_unlock_task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        pass
+                    elapsed_ms = int((loop_time() - start_ts) * 1000)
+                    _LOGGER.warning(
+                        "[Unlock] Timeout hard %.1fs — apertura non riuscita",
+                        self._UNLOCK_TIMEOUT_S,
+                    )
+                    self._register_end(
+                        success=False,
+                        esito="timeout",
+                        durata_ms=elapsed_ms,
+                        strategia=None,
+                    )
+                    return UnlockResult(
+                        success=False,
+                        strategy="timeout",
+                        error=f"timeout {self._UNLOCK_TIMEOUT_S:.0f}s",
+                    )
+                except asyncio.CancelledError:
+                    # Annullato via cancel_unlock()
+                    elapsed_ms = int((loop_time() - start_ts) * 1000)
+                    _LOGGER.info("[Unlock] Task cancellato via Annulla utente")
+                    self._register_end(
+                        success=False,
+                        esito="annullato",
+                        durata_ms=elapsed_ms,
+                        strategia=None,
+                    )
+                    return UnlockResult(
+                        success=False,
+                        strategy="annullato",
+                        error="annullato dall'utente",
+                    )
+                except UnlockFailed as exc:
+                    elapsed_ms = int((loop_time() - start_ts) * 1000)
+                    is_nullpoint = "NULLpoint" in str(exc)
+                    self._register_end(
+                        success=False,
+                        esito="bug_nullpoint" if is_nullpoint else "errore",
+                        durata_ms=elapsed_ms,
+                        strategia=None,
+                    )
+                    raise
+
+                # Esecuzione completata (successo o fail "gestito")
                 elapsed_ms = int((loop_time() - start_ts) * 1000)
-                _LOGGER.warning(
-                    "[Unlock] Timeout hard %.1fs raggiunto — richiesta abbandonata "
-                    "per sicurezza cancelletto",
-                    self._UNLOCK_MAX_ELAPSED_S,
-                )
-                self._update_stats(
-                    esito="timeout",
-                    tentativi=None,
-                    durata_ms=elapsed_ms,
-                    strategia=None,
-                )
-                return UnlockResult(
-                    success=False,
-                    strategy="timeout",
-                    error=f"timeout {self._UNLOCK_MAX_ELAPSED_S}s",
-                )
-            except UnlockFailed as exc:
-                elapsed_ms = int((loop_time() - start_ts) * 1000)
-                # Analizza se è il bug NULLpoint del firmware
-                is_nullpoint = "NULLpoint" in str(exc) or "subStatus=NULLpoint" in str(exc)
-                self._update_stats(
-                    esito="bug_nullpoint" if is_nullpoint else "errore",
-                    tentativi=None,
-                    durata_ms=elapsed_ms,
-                    strategia=None,
-                )
-                raise
+                if result.success:
+                    _LOGGER.info(
+                        "[Unlock] OK strategia=%s durata=%dms",
+                        result.strategy, elapsed_ms,
+                    )
+                    self._register_end(
+                        success=True,
+                        esito="ok",
+                        durata_ms=elapsed_ms,
+                        strategia=result.strategy,
+                    )
+                else:
+                    is_nullpoint = result.error and "NULLpoint" in str(result.error)
+                    self._register_end(
+                        success=False,
+                        esito="bug_nullpoint" if is_nullpoint else "errore",
+                        durata_ms=elapsed_ms,
+                        strategia=result.strategy,
+                    )
+                return result
+            finally:
+                self._current_unlock_task = None
+                self._is_unlocking = False
+                self.async_update_listeners()
 
-            elapsed_ms = int((loop_time() - start_ts) * 1000)
-            elapsed_s = elapsed_ms / 1000.0
+    def _register_end(
+        self,
+        *,
+        success: bool,
+        esito: str,
+        durata_ms: int,
+        strategia: str | None,
+    ) -> None:
+        """Registra fine apertura: aggiorna stats, storico, timestamp, esito."""
+        import time
+        self._last_unlock_end_ts = time.monotonic()
+        self._last_unlock_success = success
+        self._update_stats(
+            esito=esito,
+            tentativi=None,
+            durata_ms=durata_ms,
+            strategia=strategia,
+        )
+        # Storico ultime 10
+        self.unlock_history.append({
+            "esito": esito,
+            "durata_ms": durata_ms,
+            "strategia": strategia,
+            "timestamp": _now_iso(),
+        })
 
-            # 3) Timestamp guard: se è passato più di MAX_ELAPSED_S dalla
-            # pressione, RIGETTIAMO il risultato positivo per sicurezza.
-            total_elapsed_s = loop_time() - press_ts
-            if result.success and total_elapsed_s > self._UNLOCK_MAX_ELAPSED_S:
-                _LOGGER.warning(
-                    "[Unlock] Risultato positivo scartato: elapsed=%.2fs > guard=%.1fs. "
-                    "L'utente potrebbe aver già aperto a mano.",
-                    total_elapsed_s, self._UNLOCK_MAX_ELAPSED_S,
-                )
-                self._update_stats(
-                    esito="scartato_tardivo",
-                    tentativi=None,
-                    durata_ms=elapsed_ms,
-                    strategia=result.strategy,
-                )
-                return UnlockResult(
-                    success=False,
-                    strategy=result.strategy,
-                    error=f"risposta tardiva ({total_elapsed_s:.1f}s), scartata per sicurezza",
-                )
+    def reset_stats(self) -> None:
+        """Azzera contatori e storico diagnostici (servizio reset_stats)."""
+        _LOGGER.info("[DeviceCoordinator] Reset statistiche diagnostiche")
+        self.call_count_today = 0
+        self.call_count_total = 0
+        self._call_count_day = None
+        self.unlock_history.clear()
+        self.last_unlock_stats = {
+            "esito": None,
+            "tentativi": None,
+            "durata_ms": None,
+            "strategia": None,
+            "timestamp": None,
+        }
+        self.async_update_listeners()
 
-            # Registra esito
-            if result.success:
-                _LOGGER.info(
-                    "[Unlock] OK strategia=%s durata=%dms",
-                    result.strategy, elapsed_ms,
-                )
-                self._update_stats(
-                    esito="ok",
-                    tentativi=None,
-                    durata_ms=elapsed_ms,
-                    strategia=result.strategy,
-                )
-            else:
-                is_nullpoint = result.error and "NULLpoint" in str(result.error)
-                self._update_stats(
-                    esito="bug_nullpoint" if is_nullpoint else "errore",
-                    tentativi=None,
-                    durata_ms=elapsed_ms,
-                    strategia=result.strategy,
-                )
-
-            return result
+    def increment_call_count(self) -> None:
+        """Incrementa i contatori chiamate (oggi + totale) con rollover giorno."""
+        from datetime import date
+        today = date.today().isoformat()
+        if self._call_count_day != today:
+            self.call_count_today = 0
+            self._call_count_day = today
+        self.call_count_today += 1
+        self.call_count_total += 1
+        self.async_update_listeners()
 
     def _update_stats(
         self,

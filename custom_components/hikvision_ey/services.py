@@ -210,6 +210,36 @@ async def _handle_reconnect(hass: HomeAssistant, call: ServiceCall) -> None:
     _LOGGER.info("[Service] reconnect: forced re-login")
 
 
+async def _handle_cancel_unlock(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle the cancel_unlock service call.
+
+    Annulla immediatamente l'apertura in corso (task cancellabile).
+    Equivalente al bottone "Annulla Apertura" — utile per automazioni o
+    per un secondo tasto fisico d'emergenza.
+    """
+    coordinator = _get_coordinator(hass)
+    if coordinator is None:
+        raise HomeAssistantError(f"{DOMAIN} coordinator not available")
+    cancelled = await coordinator.cancel_unlock()
+    if cancelled:
+        _LOGGER.info("[Service] cancel_unlock: apertura annullata")
+    else:
+        _LOGGER.info("[Service] cancel_unlock: nessuna apertura in corso")
+
+
+async def _handle_reset_stats(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle the reset_stats service call.
+
+    Azzera i contatori Chiamate Oggi / Totali e lo storico ultime 10 aperture.
+    Non tocca preferred_strategy né la sessione cloud.
+    """
+    coordinator = _get_coordinator(hass)
+    if coordinator is None:
+        raise HomeAssistantError(f"{DOMAIN} coordinator not available")
+    coordinator.reset_stats()
+    _LOGGER.info("[Service] reset_stats: contatori e storico azzerati")
+
+
 # ── Registrazione ─────────────────────────────────────────────────────────────
 
 
@@ -240,6 +270,12 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, "reconnect", lambda call: _handle_reconnect(hass, call), schema=EMPTY_SCHEMA
     )
+    hass.services.async_register(
+        DOMAIN, "cancel_unlock", lambda call: _handle_cancel_unlock(hass, call), schema=EMPTY_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "reset_stats", lambda call: _handle_reset_stats(hass, call), schema=EMPTY_SCHEMA
+    )
     _LOGGER.debug("[Services] All %s services registered", DOMAIN)
 
 
@@ -249,7 +285,16 @@ def async_unregister_services(hass: HomeAssistant) -> None:
     Args:
         hass: Home Assistant instance.
     """
-    for service in ("open_gate", "answer_call", "hangup", "restart", "refresh", "reconnect"):
+    for service in (
+        "open_gate",
+        "answer_call",
+        "hangup",
+        "restart",
+        "refresh",
+        "reconnect",
+        "cancel_unlock",
+        "reset_stats",
+    ):
         hass.services.async_remove(DOMAIN, service)
     _LOGGER.debug("[Services] All %s services unregistered", DOMAIN)
 

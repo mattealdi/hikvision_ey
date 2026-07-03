@@ -86,6 +86,24 @@ async def async_get_config_entry_diagnostics(
             "preferred_strategy": device_coordinator.unlock_manager.preferred_strategy,
         }
 
+    # v0.4.0: dump esteso apertura cancelletto (ultima + storico ultime 10
+    # + contatori chiamate). Utile per capire tempi reali / bug NULLpoint
+    # da inviare al supporto Hikvision.
+    unlock_info: dict[str, Any] = {}
+    if device_coordinator:
+        unlock_info = {
+            "is_unlocking": device_coordinator.is_unlocking,
+            "last_unlock_stats": device_coordinator.last_unlock_stats,
+            "unlock_history": list(device_coordinator.unlock_history),
+            "call_count_today": device_coordinator.call_count_today,
+            "call_count_total": device_coordinator.call_count_total,
+            "config": {
+                "timeout_s": device_coordinator._UNLOCK_TIMEOUT_S,
+                "cooldown_ok_s": device_coordinator._UNLOCK_COOLDOWN_OK_S,
+                "cooldown_fail_s": device_coordinator._UNLOCK_COOLDOWN_FAIL_S,
+            },
+        }
+
     diag: dict[str, Any] = {
         "config_entry": {
             "domain": config_entry.domain,
@@ -96,6 +114,7 @@ async def async_get_config_entry_diagnostics(
         "client": client_info,
         "devices": async_redact_data(devices_info, TO_REDACT),
         "call_statuses": call_statuses,
+        "unlock": unlock_info,
     }
 
     _LOGGER.debug("[Diagnostics] Generated diagnostics for entry %s", config_entry.entry_id)

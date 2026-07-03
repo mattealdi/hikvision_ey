@@ -151,18 +151,17 @@ class StrategyVerified:
             serial,
         )
 
-        # SICUREZZA CANCELLETTO PEDONALE (v0.3.7):
-        # 6 tentativi entro ~3.7s totali (0, 0.6, 1.2, 1.9, 2.7, 3.7).
-        # La finestra sta comunque DENTRO il timeout hard di 5s applicato dal
-        # coordinator (open_gate_safely), quindi la sicurezza del cancelletto
-        # è invariata: nessuna apertura possibile oltre 5s dalla pressione.
-        # v0.3.6 usava 4 tentativi in 2.0s: sperimentazione del 3/7/2026 ha
-        # mostrato che i NULLpoint transient del firmware V2.2.56 durano
-        # spesso 2-3s, quindi estendere la finestra a ~4s aumenta la
-        # probabilità di apertura al primo press senza intaccare la garanzia
-        # di sicurezza. Per NULLpoint cronici (30-40s) il retry non può nulla
-        # e il timeout hard del coordinator taglia comunque a 5s.
-        RETRY_DELAYS = [0, 0.6, 1.2, 1.9, 2.7, 3.7]
+        # SICUREZZA CANCELLETTO PEDONALE (v0.4.0):
+        # 8 tentativi entro ~14s totali (0, 2, 4, 6, 8, 10, 12, 14).
+        # Il timeout hard del coordinator è 15s. La finestra copre la maggior
+        # parte dei NULLpoint transient/medi del firmware V2.2.56, senza però
+        # arrivare a durate che permettano all'utente di scendere, aprire con
+        # la chiave, entrare e richiudere (>20s stimati). Se durante questi
+        # 14s l'utente scende alla porta, può premere il bottone "Annulla
+        # Apertura" da HA per interrompere immediatamente i retry.
+        # Cancelletto a chiusura manuale: nessuna richiusura automatica,
+        # quindi l'annullamento è la protezione principale.
+        RETRY_DELAYS = [0, 2, 4, 6, 8, 10, 12, 14]
         last_error: str | None = None
         last_meta: int | None = None
         last_http: int | None = None

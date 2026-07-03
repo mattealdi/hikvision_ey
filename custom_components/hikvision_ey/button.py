@@ -1,7 +1,8 @@
 """Button entities per l'integrazione Hikvision EY.
 
-7 button:
+8 button:
 - apri_cancelletto (open_gate) — apre cancelletto con strategia auto
+- annulla_apertura (cancel_unlock) — v0.4.0: annulla apertura in corso
 - apri_porta_1 (open_door_1) — apre porta/lock index 0
 - apri_porta_2 (open_door_2) — apre porta/lock index 1
 - rispondi (answer) — risponde alla chiamata
@@ -34,7 +35,7 @@ class HikvisionEyButtonDescription(ButtonEntityDescription):
 
     lock_index: int = 0
     strategy: str = STRATEGY_AUTO
-    action: str = "open_gate"  # open_gate / answer / hangup / restart / refresh_token
+    action: str = "open_gate"  # open_gate / cancel_unlock / answer / hangup / restart / refresh_token
 
 
 BUTTON_DESCRIPTIONS: tuple[HikvisionEyButtonDescription, ...] = (
@@ -45,6 +46,14 @@ BUTTON_DESCRIPTIONS: tuple[HikvisionEyButtonDescription, ...] = (
         action="open_gate",
         lock_index=0,
         strategy=STRATEGY_AUTO,
+    ),
+    # v0.4.0: bottone Annulla — interrompe apertura in corso.
+    # UI: consigliato mostrarlo condizionalmente quando is_unlocking=True.
+    HikvisionEyButtonDescription(
+        key="cancel_unlock",
+        translation_key="cancel_unlock",
+        icon="mdi:gate",
+        action="cancel_unlock",
     ),
     HikvisionEyButtonDescription(
         key="open_door_1",
@@ -157,11 +166,8 @@ class HikvisionEyButton(HikvisionEyEntity, ButtonEntity):
                 if device and device.cameras:
                     channel = device.cameras[0].channel_number
 
-                # v0.3.6: passiamo dal wrapper safety-aware del coordinator.
-                # Il wrapper applica cooldown 3s, serializzazione, timeout hard 5s
-                # e timestamp guard — vedi coordinator.open_gate_safely per i
-                # dettagli. NON usare più direttamente unlock_manager.open_gate
-                # dal layer entity per evitare aperture non protette.
+                # v0.4.0: passa sempre dal wrapper safety-aware del coordinator.
+                # Applica cooldown differenziato, timeout hard 15s, task cancellabile.
                 result = await coordinator.open_gate_safely(
                     serial=serial,
                     channel=channel,
@@ -178,6 +184,14 @@ class HikvisionEyButton(HikvisionEyEntity, ButtonEntity):
                     raise HomeAssistantError(
                         f"Apertura cancelletto fallita: {result.error}"
                     )
+
+            elif action == "cancel_unlock":
+                # v0.4.0: annulla l'apertura in corso, se esiste.
+                cancelled = await coordinator.cancel_unlock()
+                if cancelled:
+                    _LOGGER.info("[Button] Apertura annullata su richiesta utente")
+                else:
+                    _LOGGER.info("[Button] Cancel richiesto ma nessuna apertura in corso")
 
             elif action == "answer":
                 await coordinator.client.answer_call(serial)

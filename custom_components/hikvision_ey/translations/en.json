@@ -88,6 +88,9 @@
       },
       "refresh_token": {
         "name": "Refresh Token"
+      },
+      "cancel_unlock": {
+        "name": "Cancel Unlock"
       }
     },
     "binary_sensor": {
@@ -117,6 +120,13 @@
         "state": {
           "off": "No Call",
           "on": "In Call"
+        }
+      },
+      "unlock_in_progress": {
+        "name": "Unlock In Progress",
+        "state": {
+          "off": "Idle",
+          "on": "Running"
         }
       }
     },
@@ -156,6 +166,12 @@
       },
       "unlock_last_strategia": {
         "name": "Last Unlock Strategy"
+      },
+      "calls_today": {
+        "name": "Calls Today"
+      },
+      "calls_total": {
+        "name": "Calls Total"
       }
     }
   }

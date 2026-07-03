@@ -88,6 +88,9 @@
       },
       "refresh_token": {
         "name": "Aggiorna Token"
+      },
+      "cancel_unlock": {
+        "name": "Annulla Apertura"
       }
     },
     "binary_sensor": {
@@ -117,6 +120,13 @@
         "state": {
           "off": "Nessuna Chiamata",
           "on": "In Chiamata"
+        }
+      },
+      "unlock_in_progress": {
+        "name": "Apertura in Corso",
+        "state": {
+          "off": "Ferma",
+          "on": "In corso"
         }
       }
     },
@@ -156,6 +166,12 @@
       },
       "unlock_last_strategia": {
         "name": "Ultima Apertura – Strategia"
+      },
+      "calls_today": {
+        "name": "Chiamate Oggi"
+      },
+      "calls_total": {
+        "name": "Chiamate Totali"
       }
     }
   }

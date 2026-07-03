@@ -131,6 +131,24 @@ SENSOR_DESCRIPTIONS: tuple[HikvisionEySensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_key="unlock_strategia",
     ),
+    # ---- v0.4.0: contatori chiamate --------------------------------------
+    # Nella UI principale (non diagnostica) perché sono informazioni d'uso
+    # utili, non solo debug.
+    HikvisionEySensorDescription(
+        key="calls_today",
+        translation_key="calls_today",
+        icon="mdi:phone-log",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_key="calls_today",
+    ),
+    HikvisionEySensorDescription(
+        key="calls_total",
+        translation_key="calls_total",
+        icon="mdi:phone-log-outline",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_key="calls_total",
+    ),
 )
 
 
@@ -233,5 +251,11 @@ class HikvisionEySensor(HikvisionEyEntity, SensorEntity):
                 return stats.get("durata_ms")
             if key == "unlock_strategia":
                 return stats.get("strategia")
+
+        # ---- v0.4.0: contatori chiamate ------------------------------------
+        if key == "calls_today":
+            return getattr(self.coordinator, "call_count_today", 0)
+        if key == "calls_total":
+            return getattr(self.coordinator, "call_count_total", 0)
 
         return None

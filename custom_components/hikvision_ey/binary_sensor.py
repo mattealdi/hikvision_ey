@@ -1,10 +1,11 @@
 """Binary sensor entities per l'integrazione Hikvision EY.
 
-4 binary_sensor:
-- online           — device online sul cloud
-- cloud_connected  — cloud reachable (basato su coordinator)
-- is_ringing       — campanello premuto (True se ringing)
-- in_call          — chiamata in corso
+5 binary_sensor:
+- online              — device online sul cloud
+- cloud_connected     — cloud reachable (basato su coordinator)
+- is_ringing          — campanello premuto (True se ringing)
+- in_call             — chiamata in corso
+- unlock_in_progress  — v0.4.0: apertura cancelletto in corso (per UI/automation)
 
 NOTE v0.3.2: rimossi 'monitor_online' e 'outdoor_online' perché il
 coordinator li impostava entrambi al valore di dev.is_online, duplicando
@@ -53,6 +54,17 @@ DEVICE_BINARY_SENSOR_DESCRIPTIONS: tuple[HikvisionEyBinarySensorDescription, ...
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         sensor_type="device",
         icon="mdi:cloud-check",
+    ),
+    # v0.4.0: sensore "Apertura in Corso" — True mentre HA sta tentando
+    # l'apertura del cancelletto. Usato per:
+    # - Mostrare il bottone Annulla in UI solo quando serve
+    # - Automation: notifica se attesa > tot secondi, ecc.
+    HikvisionEyBinarySensorDescription(
+        key="unlock_in_progress",
+        translation_key="unlock_in_progress",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        sensor_type="device",
+        icon="mdi:gate-arrow-right",
     ),
 )
 
@@ -151,6 +163,10 @@ class HikvisionEyDeviceBinarySensor(HikvisionEyBinarySensor):
         if key == "cloud_connected":
             # True se coordinator ha dati validi e device è online
             return bool(self.coordinator.data) and bool(dev.is_online)
+
+        if key == "unlock_in_progress":
+            # v0.4.0: riflette lo stato del wrapper open_gate_safely
+            return bool(getattr(self.coordinator, "is_unlocking", False))
 
         return None
 

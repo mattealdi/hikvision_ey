@@ -3,6 +3,75 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.4.0] - 2026-07-03
+
+### Security / Safety
+- **Finestra apertura estesa a 15 s** (era 5 s in v0.3.6/v0.3.7) con
+  serializzazione, cooldown differenziato e task cancellabile. Copre
+  gli scenari NULLpoint cronici da 5-15 s senza aspettare il firmware
+  V2.2.66. La sicurezza del cancelletto pedonale a chiusura manuale
+  è ora garantita dal **bottone "Annulla Apertura"** e dal cooldown
+  30 s post-fail, non più dal timestamp guard (rimosso).
+- **Cooldown differenziato**: 3 s dopo apertura riuscita, **30 s dopo
+  fallimento**. Se il tentativo fallisce, per 30 s il bottone Apri
+  ignora nuove pressioni, riducendo il rischio che l'utente, già
+  incamminato verso la chiave fisica, ripiombi il bottone HA per sbaglio.
+- **Task cancellabile via `asyncio.shield` + `create_task`**. Il
+  coordinator memorizza il task in flight in `_current_unlock_task` e
+  lo espone via `cancel_unlock()`, chiamato istantaneamente dal nuovo
+  bottone o dal servizio HA `hikvision_ey.cancel_unlock`.
+
+### Added
+- **Bottone `cancel_unlock`** (`mdi:gate`, categoria CONFIG): annulla
+  qualsiasi apertura in corso senza aspettare il timeout. Progettato
+  per l'automazione domestica: l'utente lo mette in dashboard fianco
+  al bottone Apri per gestire il caso "ho già aperto con la chiave".
+- **Binary sensor `unlock_in_progress`** (`device_class=RUNNING`,
+  `mdi:gate-arrow-right`): riflette lo stato di apertura in corso.
+  Utile per automazioni (LED strip, notifica, etc.) e per la UI
+  (mostra spinner mentre HA sta effettivamente tentando l'apertura).
+- **Sensori Chiamate**:
+  - `calls_today` (state_class `TOTAL_INCREASING`) — UI principale.
+  - `calls_total` (categoria DIAGNOSTIC) — contatore assoluto.
+  Popolati agganciandosi all'evento `EVENT_DOORBELL_PRESSED` già
+  emesso dal `CallStatusCoordinator` su transizione idle -> ringing.
+  Rollover del contatore "oggi" a mezzanotte locale.
+- **Servizi HA**:
+  - `hikvision_ey.cancel_unlock` — equivalente del bottone Annulla,
+    utile in automazioni (es. tag NFC, telecomando fisico).
+  - `hikvision_ey.reset_stats` — azzera contatori Chiamate + storico
+    ultime 10 aperture.
+- **Diagnostic dump esteso**: sezione `unlock` con `last_unlock_stats`,
+  `unlock_history` (deque 10 elementi), `call_count_today/total` e
+  configurazione runtime (timeout, cooldown). Utile da allegare alla
+  ticket Hikvision se il bug NULLpoint si ripresenta con V2.2.66.
+- **Traduzioni IT + EN** per tutte le nuove entità.
+
+### Changed
+- **Finestra retry `StrategyVerified` estesa a ~14 s**: 8 tentativi a
+  0/2/4/6/8/10/12/14 s (era ~3.7 s in v0.3.7). Coerente con il timeout
+  hard 15 s del coordinator e con l'osservazione utente che l'apertura
+  reale, quando parte, tarda 3-40 s dalla pressione con firmware V2.2.56.
+- **Timestamp guard >5 s rimosso**: sostituito dal bottone Annulla +
+  cooldown 30 s post-fail. La logica precedente era stata pensata per
+  la finestra 5 s ed è incompatibile con l'attesa 15 s.
+
+### Rationale
+Dopo v0.3.7 la finestra 5 s si è confermata troppo stretta per il
+firmware V2.2.56 in condizione NULLpoint cronico. Alzarla a 15 s
+aumenta drasticamente la probabilità di apertura al primo press, ma
+introduce un rischio: se l'utente, non vedendo il cancelletto aprirsi,
+va ad aprire con la chiave e poi il bottone HA riesce in ritardo,
+il cancelletto (a chiusura MANUALE) resterebbe aperto. Il bottone
+"Annulla Apertura" è la protezione principale contro questo scenario:
+l'utente ha 15 s per premerlo prima di uscire di casa. Il cooldown
+30 s post-fail chiude l'altro caso (ri-pressione accidentale).
+
+Questa release è il compromesso di sicurezza definitivo finché non
+arriva il firmware V2.2.66 dal supporto Hikvision. Alla ricezione:
+release v0.4.1 con retry ridotta (2-3 tentativi) e timeout riportato
+a 5 s.
+
 ## [0.3.7] - 2026-07-03
 
 ### Changed
