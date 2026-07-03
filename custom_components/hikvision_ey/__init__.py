@@ -53,6 +53,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await device_coordinator.async_close()
         raise ConfigEntryNotReady(f"Cannot connect to Hik-Connect: {exc}") from exc
 
+    # v0.5.0: ricarica lo stato persistito (contatori chiamate + ultimo esito
+    # apertura) dallo Store su disco. Va fatto DOPO il primo refresh (login ok)
+    # e PRIMA di creare le entità, così i sensori diagnostici partono con i
+    # valori corretti invece di "sconosciuto" dopo un riavvio di HA.
+    await device_coordinator.async_load_persistent_state()
+
     # Coordinator per lo stato chiamate (condivide il client cloud)
     call_coordinator = HikvisionEyCallStatusCoordinator(hass, device_coordinator)
     await call_coordinator.async_config_entry_first_refresh()

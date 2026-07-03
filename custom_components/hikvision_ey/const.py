@@ -35,7 +35,7 @@ CONF_CALL_POLL_INTERVAL_RINGING = "call_poll_interval_ringing"
 # ── Valori di default ─────────────────────────────────────────────────────────
 DEFAULT_TIMEOUT = 15  # secondi
 DEFAULT_REGION = "EU"
-DEFAULT_DEVICE_POLL_INTERVAL = 300  # 5 minuti
+DEFAULT_DEVICE_POLL_INTERVAL = 60  # v0.5.0: 60s (era 300s) per rilevare prima il reboot del monitor
 DEFAULT_CALL_POLL_INTERVAL_IDLE = 30  # secondi
 DEFAULT_CALL_POLL_INTERVAL_RINGING = 3  # secondi durante ringing
 

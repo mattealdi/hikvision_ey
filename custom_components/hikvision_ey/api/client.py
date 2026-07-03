@@ -410,8 +410,9 @@ class HikvisionEyClient:
         wan_ip: str | None = HikvisionEyClient._clean_ip(conn.get("netIp"))
         wifi_signal: int | None = wifi.get("signal") if isinstance(wifi.get("signal"), int) else None
 
-        # Il cloud mantiene IP/segnale stale dopo offline — azzera
-        if not is_online:
+        # v0.5.0: azzeriamo IP/segnale SOLO se offline ESPLICITO (False).
+        # None (sconosciuto) non implica offline, quindi non tocchiamo i dati.
+        if is_online is False:
             local_ip = wan_ip = wifi_signal = None
 
         return DeviceInfo(
@@ -427,6 +428,8 @@ class HikvisionEyClient:
             update_available=HikvisionEyClient._parse_update_available(status),
             locks=HikvisionEyClient._parse_locks(status),
             raw=device,
+            cloud_is_online=is_online,
+            online_source="cloud",
         )
 
     @staticmethod

@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import HikvisionEyClient, LocalISAPIClient, UnlockManager
@@ -44,6 +47,22 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# v0.5.0: TTL (secondi) di un override di reachability derivato dal probe
+# live get_call_status. Copre più cicli di polling del cloud stale.
+_REACHABILITY_TTL_S = 120
+_REACHABILITY_TTL_ERROR_S = 45
+# Versione dello storage persistente dello stato diagnostico.
+_STATE_STORE_VERSION = 1
+
+
+@dataclass
+class _ReachabilityOverride:
+    """Override temporaneo dello stato online, con scadenza monotonic."""
+
+    online: bool | None
+    source: str
+    expires_at: float
 
 
 class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
@@ -124,6 +143,18 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5
 
+        # ---- v0.5.0: overlay reachability + persistenza stato --------------
+        # Il cloud Hik-Connect mantiene globalStatus=1 stale dopo un reboot
+        # locale del monitor. Il probe live get_call_status (CallStatusCoordinator)
+        # rileva DeviceOffline in modo più affidabile e marca qui un override
+        # temporaneo che prevale sul dato cloud finché non scade.
+        self._reachability_overrides: dict[str, _ReachabilityOverride] = {}
+        # Store persistente per stato diagnostico e contatori (sopravvive ai
+        # restart di HA). Fonte di verità; i RestoreSensor sono solo display.
+        self._store: Store = Store(
+            hass, _STATE_STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_state"
+        )
+
         # ---- v0.4.0: safety layer per apertura cancelletto ------------------
         # Serializza le richieste di apertura (una alla volta) + cooldown per
         # evitare doppie pressioni + task cancellabile via bottone "Annulla".
@@ -179,6 +210,9 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
 
             devices = await self.client.get_devices()
             self._consecutive_errors = 0
+            # v0.5.0: applica gli override di reachability ancora validi, così
+            # un DeviceOffline rilevato dal probe live prevale sul cloud stale.
+            self._apply_reachability_overrides(devices)
             _LOGGER.debug("[DeviceCoordinator] Updated %d devices", len(devices))
             return devices
 
@@ -206,6 +240,86 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         await self.client.close()
         if self.isapi_client:
             await self.isapi_client.close()
+
+    # ------------------------------------------------------------------
+    # v0.5.0 — Reachability overlay (Bug A)
+    # ------------------------------------------------------------------
+    def _apply_reachability_overrides(self, devices: list[DeviceInfo]) -> None:
+        """Sovrascrive is_online sui device con override live ancora validi."""
+        now = time.monotonic()
+        # Pulisci override scaduti
+        self._reachability_overrides = {
+            s: ov for s, ov in self._reachability_overrides.items()
+            if ov.expires_at > now
+        }
+        for dev in devices:
+            ov = self._reachability_overrides.get(dev.serial)
+            if ov is None:
+                continue
+            dev.is_online = ov.online
+            dev.online_source = ov.source
+            if ov.online is False:
+                dev.local_ip = dev.wan_ip = dev.wifi_signal = None
+
+    @callback
+    def mark_device_reachability(
+        self, serial: str, online: bool | None, source: str, ttl: int = _REACHABILITY_TTL_S
+    ) -> None:
+        """Registra un override live dello stato online (dal probe get_call_status).
+
+        Prevale sul dato cloud (che può restare stale dopo un reboot locale)
+        finché non scade. Aggiorna subito i device già in memoria e notifica.
+        """
+        self._reachability_overrides[serial] = _ReachabilityOverride(
+            online=online,
+            source=source,
+            expires_at=time.monotonic() + ttl,
+        )
+        changed = False
+        for dev in self.data or []:
+            if dev.serial == serial and (dev.is_online is not online or dev.online_source != source):
+                dev.is_online = online
+                dev.online_source = source
+                if online is False:
+                    dev.local_ip = dev.wan_ip = dev.wifi_signal = None
+                changed = True
+        if changed:
+            self.async_update_listeners()
+
+    # ------------------------------------------------------------------
+    # v0.5.0 — Persistenza stato diagnostico (Bug B)
+    # ------------------------------------------------------------------
+    async def async_load_persistent_state(self) -> None:
+        """Reidrata stato diagnostico e contatori dallo Store all'avvio."""
+        data = await self._store.async_load() or {}
+        stored_stats = data.get("last_unlock_stats")
+        if isinstance(stored_stats, dict):
+            self.last_unlock_stats.update(stored_stats)
+        for entry in data.get("unlock_history") or []:
+            self.unlock_history.append(entry)
+        self.call_count_today = int(data.get("call_count_today") or 0)
+        self.call_count_total = int(data.get("call_count_total") or 0)
+        self._call_count_day = data.get("call_count_day")
+        _LOGGER.debug(
+            "[DeviceCoordinator] Stato persistente ricaricato: esito=%s calls_total=%d",
+            self.last_unlock_stats.get("esito"), self.call_count_total,
+        )
+
+    @callback
+    def _schedule_save_state(self) -> None:
+        """Salva (debounced) lo stato diagnostico corrente su disco."""
+        self._store.async_delay_save(self._state_to_persist, 2)
+
+    @callback
+    def _state_to_persist(self) -> dict[str, Any]:
+        """Snapshot serializzabile dello stato diagnostico."""
+        return {
+            "last_unlock_stats": self.last_unlock_stats,
+            "unlock_history": list(self.unlock_history),
+            "call_count_today": self.call_count_today,
+            "call_count_total": self.call_count_total,
+            "call_count_day": self._call_count_day,
+        }
 
     def update_preferred_strategy(self, strategy: str) -> None:
         """Persist the preferred unlock strategy in entry options.
@@ -280,7 +394,11 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
     #  - Cooldown post-ok 3s (invariato): previene la doppia pressione.
     _UNLOCK_TIMEOUT_S: float = 15.0
     _UNLOCK_COOLDOWN_OK_S: float = 3.0
-    _UNLOCK_COOLDOWN_FAIL_S: float = 20.0
+    # v0.5.0: ridotto 20 -> 5s. Con il fix single-shot (v0.4.2) un fallimento
+    # non innesca più raffiche di retry, quindi non serve un cooldown lungo:
+    # 5s bastano a evitare doppie pressioni accidentali senza costringere
+    # l'utente ad aspettare 20s per ritentare un'apertura legittima.
+    _UNLOCK_COOLDOWN_FAIL_S: float = 5.0
 
     @property
     def is_unlocking(self) -> bool:
@@ -325,41 +443,48 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         - Task cancellabile via cancel_unlock()
         - Aggiornamento stats + storico + stato is_unlocking
 
-        Ritorna sempre un UnlockResult. Non solleva UnlockFailed direttamente:
-        gli errori terminali sono catturati e trasformati in result.success=False
-        per lasciare al chiamante (button/service) la scelta se rilanciare.
+        Ritorna SEMPRE un UnlockResult e non solleva mai UnlockFailed: tutti
+        gli errori terminali (incluso il bug NULLpoint del firmware) sono
+        catturati e trasformati in result.success=False, così il chiamante
+        (button/service) ha un contratto uniforme e decide lui se segnalare.
         """
         import time
         loop_time = time.monotonic
 
-        press_ts = loop_time()
-
-        # 1) Cooldown differenziato: 30s dopo fail, 3s dopo ok
-        cooldown = (
-            self._UNLOCK_COOLDOWN_OK_S if self._last_unlock_success
-            else self._UNLOCK_COOLDOWN_FAIL_S
-        )
-        elapsed_since_end = press_ts - self._last_unlock_end_ts
-        if self._last_unlock_end_ts > 0 and elapsed_since_end < cooldown:
-            residual = cooldown - elapsed_since_end
-            _LOGGER.warning(
-                "[Unlock] Cooldown attivo (%.1fs residui, %s) — richiesta ignorata",
-                residual, "post-ok" if self._last_unlock_success else "post-fail",
-            )
-            self._update_stats(
-                esito="ignorato_cooldown",
-                tentativi=0,
-                durata_ms=0,
-                strategia=None,
-            )
-            return UnlockResult(
-                success=False,
-                strategy="cooldown",
-                error=f"cooldown {residual:.0f}s residui",
-            )
-
-        # 2) Serializzazione + esecuzione con timeout hard
+        # v0.5.0: cooldown + esecuzione TUTTI dentro lo stesso lock.
+        # Prima il check cooldown era fuori dal lock: due pressioni concorrenti
+        # potevano superarlo entrambe (leggevano _last_unlock_end_ts prima che
+        # l'altra lo aggiornasse) e serializzarsi comunque, aggirando il
+        # cooldown. Ora il controllo avviene dopo l'acquisizione del lock,
+        # quindi è atomico rispetto all'aggiornamento del timestamp.
         async with self._unlock_lock:
+            press_ts = loop_time()
+
+            # 1) Cooldown differenziato: 5s dopo fail, 3s dopo ok
+            cooldown = (
+                self._UNLOCK_COOLDOWN_OK_S if self._last_unlock_success
+                else self._UNLOCK_COOLDOWN_FAIL_S
+            )
+            elapsed_since_end = press_ts - self._last_unlock_end_ts
+            if self._last_unlock_end_ts > 0 and elapsed_since_end < cooldown:
+                residual = cooldown - elapsed_since_end
+                _LOGGER.warning(
+                    "[Unlock] Cooldown attivo (%.1fs residui, %s) — richiesta ignorata",
+                    residual, "post-ok" if self._last_unlock_success else "post-fail",
+                )
+                self._update_stats(
+                    esito="ignorato_cooldown",
+                    tentativi=0,
+                    durata_ms=0,
+                    strategia=None,
+                )
+                return UnlockResult(
+                    success=False,
+                    strategy="cooldown",
+                    error=f"cooldown {residual:.0f}s residui",
+                )
+
+            # 2) Esecuzione con timeout hard
             start_ts = loop_time()
             self._is_unlocking = True
             self.async_update_listeners()  # notifica binary sensor "Apertura in Corso"
@@ -419,15 +544,27 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
                         error="annullato dall'utente",
                     )
                 except UnlockFailed as exc:
+                    # v0.5.0: coerenza col contratto "ritorna sempre UnlockResult".
+                    # Prima qui si rilanciava (raise), contraddicendo il docstring
+                    # e costringendo il chiamante a un try/except separato dal
+                    # normale flusso success=False. Il bug NULLpoint del firmware
+                    # è un errore PERMANENTE (non transitorio): nessun retry ha
+                    # senso, quindi lo classifichiamo e lo restituiamo come esito
+                    # gestito, uguale a qualsiasi altro fallimento terminale.
                     elapsed_ms = int((loop_time() - start_ts) * 1000)
-                    is_nullpoint = "NULLpoint" in str(exc)
+                    is_nullpoint = "NULLpoint" in str(exc) or "805306388" in str(exc)
+                    esito = "bug_nullpoint" if is_nullpoint else "errore"
                     self._register_end(
                         success=False,
-                        esito="bug_nullpoint" if is_nullpoint else "errore",
+                        esito=esito,
                         durata_ms=elapsed_ms,
                         strategia=None,
                     )
-                    raise
+                    return UnlockResult(
+                        success=False,
+                        strategy=esito,
+                        error=str(exc),
+                    )
 
                 # Esecuzione completata (successo o fail "gestito")
                 elapsed_ms = int((loop_time() - start_ts) * 1000)
@@ -443,7 +580,10 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
                         strategia=result.strategy,
                     )
                 else:
-                    is_nullpoint = result.error and "NULLpoint" in str(result.error)
+                    is_nullpoint = result.error and (
+                        "NULLpoint" in str(result.error)
+                        or "805306388" in str(result.error)
+                    )
                     self._register_end(
                         success=False,
                         esito="bug_nullpoint" if is_nullpoint else "errore",
@@ -489,13 +629,17 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         self.call_count_total = 0
         self._call_count_day = None
         self.unlock_history.clear()
+        # v0.5.0: timestamp valorizzato + flag reset per evitare che i
+        # RestoreSensor "resuscitino" il valore precedente dopo un reset.
         self.last_unlock_stats = {
             "esito": None,
             "tentativi": None,
             "durata_ms": None,
             "strategia": None,
-            "timestamp": None,
+            "timestamp": _now_iso(),
+            "reset": True,
         }
+        self._schedule_save_state()
         self.async_update_listeners()
 
     def increment_call_count(self) -> None:
@@ -507,6 +651,7 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
             self._call_count_day = today
         self.call_count_today += 1
         self.call_count_total += 1
+        self._schedule_save_state()
         self.async_update_listeners()
 
     def _update_stats(
@@ -517,7 +662,7 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
         durata_ms: int | None,
         strategia: str | None,
     ) -> None:
-        """Aggiorna last_unlock_stats e notifica i listener del coordinator."""
+        """Aggiorna last_unlock_stats, persiste e notifica i listener."""
         self.last_unlock_stats = {
             "esito": esito,
             "tentativi": tentativi,
@@ -525,8 +670,9 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
             "strategia": strategia,
             "timestamp": _now_iso(),
         }
-        # Notifica i sensori diagnostici che l'attributo è cambiato senza
-        # forzare un intero refresh del coordinator.
+        # v0.5.0: persistenza su disco (debounced) + notifica i sensori
+        # diagnostici che l'attributo è cambiato senza forzare un refresh.
+        self._schedule_save_state()
         self.async_update_listeners()
 
 
@@ -560,10 +706,16 @@ class HikvisionEyCallStatusCoordinator(DataUpdateCoordinator[dict[str, CallStatu
         )
 
     def _get_serials(self) -> list[str]:
-        """Get serials of devices to poll for call status."""
+        """Get serials of devices to poll for call status.
+
+        v0.5.0: NON filtriamo più su is_online. Il probe serve proprio a
+        rilevare offline reale (nonostante il cloud stale) e il recovery:
+        se saltassimo i device offline, non ci accorgeremmo mai del ritorno
+        online.
+        """
         if not self._device_coordinator.data:
             return []
-        return [d.serial for d in self._device_coordinator.data if d.is_online]
+        return [d.serial for d in self._device_coordinator.data]
 
     async def _async_update_data(self) -> dict[str, CallStatus]:
         """Fetch call status for all online devices.
@@ -598,13 +750,30 @@ class HikvisionEyCallStatusCoordinator(DataUpdateCoordinator[dict[str, CallStatu
         return results
 
     async def _fetch_one(self, serial: str) -> CallStatus:
-        """Fetch call status for a single device."""
+        """Fetch call status for a single device.
+
+        v0.5.0: usa l'esito come heartbeat live per aggiornare la reachability
+        del device coordinator (prevale sul globalStatus cloud stale).
+        """
         try:
-            return await self._client.get_call_status(serial)
+            status = await self._client.get_call_status(serial)
         except DeviceOffline:
+            self._device_coordinator.mark_device_reachability(
+                serial, False, "call_status", ttl=_REACHABILITY_TTL_S
+            )
             return CallStatus(status="offline")
         except (HikvisionEyError, aiohttp.ClientError) as exc:
+            # Errore transitorio: stato incerto → None (né online né offline).
+            self._device_coordinator.mark_device_reachability(
+                serial, None, "call_status_error", ttl=_REACHABILITY_TTL_ERROR_S
+            )
             raise UpdateFailed(f"Call status error for {serial}") from exc
+        else:
+            # Risposta valida = device raggiungibile ora.
+            self._device_coordinator.mark_device_reachability(
+                serial, True, "call_status", ttl=_REACHABILITY_TTL_S
+            )
+            return status
 
     def _handle_state_change(self, serial: str, status: CallStatus) -> None:
         """Fire HA events when call state changes.

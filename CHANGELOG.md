@@ -3,6 +3,73 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.5.0] - 2026-07-03
+
+Versione stabile: risolve i due bug residui segnalati sul campo (sensore
+dispositivo perennemente "online" dopo riavvio del monitor; sensori di
+diagnostica "sconosciuto" dopo un'apertura riuscita) e ripulisce i difetti
+latenti individuati nell'audit. L'apertura del cancelletto (cascata
+single-shot `cloud_verified → A4 → A3 → A2 → A1`) resta invariata rispetto
+alla 0.4.2 che funziona.
+
+### Fixed (Bug A: il dispositivo risultava "online" anche da spento)
+- **`is_online` a tre stati** (`True` / `False` / `None`). Prima lo stato
+  cloud `globalStatus==1` restava "appiccicato" a True e non rifletteva il
+  riavvio locale del monitor: HA continuava a dire "online" a dispositivo
+  spento.
+- **Overlay di raggiungibilità via probe live** `get_call_status`: il
+  `CallStatusCoordinator` sonda direttamente il dispositivo e marca la
+  raggiungibilità (`DeviceOffline` → offline, errore → sconosciuto, ok →
+  online) con TTL (120s ok / 45s errore). Il segnale locale è più
+  affidabile del `globalStatus` cloud e prevale su di esso.
+- **`available` restrittiva** (`entity.py`): un'entità device-bound è
+  disponibile solo con `is_online is True` (confermato/fresco). Lo stato
+  `None` (sconosciuto) non conta più come "disponibile", quindi le entità
+  non affermano "online" quando non lo sappiamo.
+- **Polling dispositivo 60s** (era 300s): rileva molto prima il cambio di
+  stato del monitor.
+
+### Fixed (Bug B: diagnostica "sconosciuto" dopo apertura riuscita)
+- **Sensori diagnostici/contatori separati** in una nuova classe
+  `HikvisionEyDiagnosticSensor` (`RestoreSensor`): leggono SOLO dallo stato
+  interno del coordinator (`last_unlock_stats`, `call_count_today/total`),
+  senza più il guard `dev is None` che li rendeva "sconosciuti" quando il
+  device era offline/sconosciuto lato cloud.
+- **Sempre disponibili** (`available=True`): sono dati locali
+  dell'integrazione, non stato del dispositivo. Non seguono più `is_online`.
+- **Persistenza su disco** via `Store`: `last_unlock_stats`, storico e
+  contatori vengono salvati (debounce 2s) e **ricaricati all'avvio**
+  (`async_load_persistent_state` in `__init__.py`, dopo il primo refresh e
+  prima della creazione delle entità). In più i sensori ripristinano il
+  valore dallo state HA (`RestoreSensor`), quindi i dati dell'ultima
+  apertura sopravvivono ai riavvii di Home Assistant.
+- **cloud_status e metadata sempre disponibili**: `firmware`, `serial`,
+  `device_name` e `cloud_status` non diventano più "non disponibili" a
+  dispositivo offline; `cloud_status` riporta correttamente
+  `online`/`offline`/`unknown`.
+
+### Fixed (difetti latenti dall'audit)
+- **Cooldown dentro il lock**: il controllo del cooldown è stato spostato
+  DENTRO `async with self._unlock_lock`. Prima era fuori, e due pressioni
+  concorrenti potevano superarlo entrambe (race sul timestamp).
+- **Cooldown post-fail 20s → 5s**: col fix single-shot v0.4.2 un fallimento
+  non innesca più raffiche di retry, quindi non serve un'attesa lunga per
+  ritentare un'apertura legittima.
+- **`open_gate_safely` coerente col contratto**: non solleva più
+  `UnlockFailed` (contraddiceva il docstring "ritorna sempre UnlockResult").
+  Ora ogni errore terminale — incluso il bug NULLpoint del firmware — viene
+  restituito come `UnlockResult(success=False)` e classificato.
+- **NULLpoint = errore permanente**: riconosciuto anche via
+  `errorCode 805306388`, classificato `bug_nullpoint`, nessun retry
+  (comportamento single-shot già corretto in 0.4.2).
+
+### Invariato
+- Cascata di apertura single-shot `cloud_verified → A4 → A3 → A2 → A1`,
+  cap safety 15s, cooldown post-ok 3s.
+- Regola di sicurezza cancelletto: chiusura MANUALE, nessuna richiusura
+  automatica dopo apertura con chiave.
+- Nessuna dipendenza da hikconnect; solo entità collegate al citofono.
+
 ## [0.4.2] - 2026-07-03
 
 ### Fixed (regressione critica: il cancelletto non apriva)

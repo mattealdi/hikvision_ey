@@ -50,12 +50,20 @@ class HikvisionEyEntity(CoordinatorEntity[HikvisionEyDeviceCoordinator]):
 
     @property
     def available(self) -> bool:
-        """Return True if the device is online."""
+        """Return True se il device è online in modo CONFERMATO.
+
+        v0.5.0: semantica corretta a tre stati. Solo is_online is True
+        (fresco/confermato) rende l'entità disponibile. None (sconosciuto,
+        es. cloud stale dopo reboot) e False NON contano più come disponibili:
+        così le entità device-bound non affermano "online" quando non lo sappiamo.
+        Richiede anche l'ultimo update del coordinator riuscito.
+        """
+        if not self.coordinator.last_update_success:
+            return False
         dev = self._device_data
         if dev is None:
             return False
-        # Se is_online è None (sconosciuto), assumiamo disponibile
-        return dev.is_online is not False
+        return dev.is_online is True
 
     @property
     def device_info(self) -> HADeviceInfo:

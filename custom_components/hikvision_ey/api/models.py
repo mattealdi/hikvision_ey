@@ -21,7 +21,7 @@ class DeviceInfo:
     firmware_version: str
     """Current firmware version string."""
     is_online: bool | None
-    """True if device is reachable from cloud."""
+    """Effective online status used by entities (cloud + overlay/staleness)."""
     local_ip: str | None
     """LAN IP reported by cloud (may be stale if offline)."""
     wan_ip: str | None
@@ -36,6 +36,10 @@ class DeviceInfo:
     """Cameras associated with this device."""
     raw: dict[str, Any] = field(default_factory=dict)
     """Raw API response (for diagnostics)."""
+    cloud_is_online: bool | None = None
+    """Raw online flag from cloud globalStatus (may be stale)."""
+    online_source: str = "cloud"
+    """Origin of is_online: cloud | call_status | call_status_error | stale."""
 
 
 @dataclass
