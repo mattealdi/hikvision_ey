@@ -3,6 +3,21 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.5] - 2026-07-03
+
+### Security / Safety
+- **Ridotta finestra di retry a ~1.3s totali** (da 3.3s di v0.3.4).
+  Motivo: un cancelletto pedonale sulla strada che si riapre dopo che
+  l'utente ha già aperto manualmente con la chiave, passato e richiuso,
+  è uno scenario reale di sicurezza. Con 3.3s di finestra un utente
+  che fallisce il pulsante e va subito alla chiave potrebbe trovarsi
+  il cancello riaperto alle spalle. Con 1.3s materialmente non si fa
+  in tempo. Compromesso: casi rari di NULLpoint firmware prolungato
+  falliscono in modo esplicito e l'utente ripreme quando serve.
+
+### Changed
+- `RETRY_DELAYS` da `[0, 0.8, 2.5]` a `[0, 0.8]` (1 tentativo + 1 retry).
+
 ## [0.3.4] - 2026-07-03
 
 ### Fixed

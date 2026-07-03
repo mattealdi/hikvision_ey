@@ -145,12 +145,15 @@ class StrategyVerified:
             serial,
         )
 
-        # Retry con backoff progressivo per errori transient.
-        # Osservato il 3 luglio 2026: monitor DS-KH7300EY ha risposto
-        # isapi.statusCode=3 subStatusCode=NULLpoint (crash firmware transient)
-        # per più di 70 secondi consecutivi. Un retry rapido non bastava.
-        # Backoff: 0s, 0.8s, 2.5s (totale attesa max ~3.3s).
-        RETRY_DELAYS = [0, 0.8, 2.5]
+        # Retry conservativo per errori transient del cloud/firmware.
+        # SICUREZZA: la finestra massima è volutamente breve (~1.3s totale)
+        # per evitare che dopo un fallimento apparente l'utente vada ad aprire
+        # con la chiave, passi, richiuda, e nel frattempo un retry tardivo
+        # riapra il cancelletto pedonale sulla strada dietro le sue spalle.
+        # Un solo retry rapido è il compromesso tra affidabilità e sicurezza.
+        # Casi di NULLpoint prolungato (osservati il 3/7/2026, durata >70s)
+        # falliranno chiaramente e l'utente ripremerà quando serve.
+        RETRY_DELAYS = [0, 0.8]
         last_error: str | None = None
         last_meta: int | None = None
         last_http: int | None = None
@@ -205,12 +208,13 @@ class StrategyVerified:
                     http_status=http_status,
                 )
 
-            # Se il firmware risponde NULLpoint (crash transient interno),
-            # non ha senso ritentare velocissimamente: serve più tempo.
-            # Il backoff progressivo (0 -> 0.8s -> 2.5s) copre questo caso.
+            # Log dedicato per il caso NULLpoint (crash transient firmware
+            # del monitor). Non aumentiamo il backoff per motivi di sicurezza:
+            # meglio fallire in fretta che riaprire il cancello dopo che
+            # l'utente ha già aperto manualmente con la chiave.
             if isapi_substatus and "NULLpoint" in str(isapi_substatus):
                 _LOGGER.info(
-                    "[Verified] Firmware returned NULLpoint (transient crash) — will retry with backoff"
+                    "[Verified] Firmware returned NULLpoint (transient crash) — quick retry only"
                 )
 
             last_meta = meta_code
