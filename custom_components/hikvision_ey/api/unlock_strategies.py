@@ -151,15 +151,18 @@ class StrategyVerified:
             serial,
         )
 
-        # SICUREZZA CANCELLETTO PEDONALE (v0.3.6):
-        # 4 tentativi entro 2.0s totali (0, 0.6, 1.2, 1.8). Oltre 2s la finestra
-        # di attesa naturale dell'utente davanti al citofono è finita e chi ha
-        # già iniziato ad aprire con la chiave non deve rischiare di trovarsi
-        # il cancelletto riaperto alle spalle. Il retry serve solo a coprire
-        # NULLpoint transient di 1-2 secondi; per NULLpoint cronici (30-40s
-        # osservati su firmware V2.2.56 build 250306) il retry NON serve, va
-        # dato feedback di errore all'utente che ripremerà quando serve.
-        RETRY_DELAYS = [0, 0.6, 1.2, 1.8]
+        # SICUREZZA CANCELLETTO PEDONALE (v0.3.7):
+        # 6 tentativi entro ~3.7s totali (0, 0.6, 1.2, 1.9, 2.7, 3.7).
+        # La finestra sta comunque DENTRO il timeout hard di 5s applicato dal
+        # coordinator (open_gate_safely), quindi la sicurezza del cancelletto
+        # è invariata: nessuna apertura possibile oltre 5s dalla pressione.
+        # v0.3.6 usava 4 tentativi in 2.0s: sperimentazione del 3/7/2026 ha
+        # mostrato che i NULLpoint transient del firmware V2.2.56 durano
+        # spesso 2-3s, quindi estendere la finestra a ~4s aumenta la
+        # probabilità di apertura al primo press senza intaccare la garanzia
+        # di sicurezza. Per NULLpoint cronici (30-40s) il retry non può nulla
+        # e il timeout hard del coordinator taglia comunque a 5s.
+        RETRY_DELAYS = [0, 0.6, 1.2, 1.9, 2.7, 3.7]
         last_error: str | None = None
         last_meta: int | None = None
         last_http: int | None = None

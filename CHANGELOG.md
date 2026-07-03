@@ -3,6 +3,33 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.7] - 2026-07-03
+
+### Changed
+- **Finestra retry `StrategyVerified` estesa a ~3.7s** (6 tentativi a
+  0/0.6/1.2/1.9/2.7/3.7s, era 4 tentativi in 2.0s in v0.3.6). Aumenta la
+  probabilità di apertura al primo press quando il NULLpoint transient
+  del firmware V2.2.56 dura 2-3s (scenario osservato empiricamente il
+  3/7/2026 alle 11:09).
+
+### Security / Safety
+- **Nessuna modifica alle garanzie di sicurezza.** La finestra retry sta
+  DENTRO il timeout hard di 5s applicato da `coordinator.open_gate_safely`,
+  quindi il timestamp guard resta invariato: nessuna apertura possibile
+  oltre 5s dalla pressione del bottone. Il vincolo di sicurezza
+  sollevato dall'utente ("il cancelletto non deve riaprirsi dopo che ho
+  aperto con la chiave") rimane matematicamente garantito.
+
+### Rationale
+v0.3.6 con 2s di retry falliva sistematicamente durante episodi di
+NULLpoint di 2-3 secondi (osservati alle 11:09 e 11:10 del 3/7/2026):
+tutti i 4 tentativi cadevano prima che il firmware si sbloccasse.
+Estendendo la finestra a 3.7s (che resta strettamente sotto il timeout
+hard di 5s del coordinator) copriamo anche i NULLpoint di durata media,
+aumentando la % di apertura al primo press senza intaccare la sicurezza.
+Per NULLpoint cronici (30-40s) resta necessario aspettare il firmware
+V2.2.66 dal supporto Hikvision.
+
 ## [0.3.6] - 2026-07-03
 
 ### Security / Safety
