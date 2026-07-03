@@ -11,5 +11,5 @@
   "loggers": ["custom_components.hikvision_ey"],
   "quality_scale": "gold",
   "requirements": [],
-  "version": "0.3.2"
+  "version": "0.3.3"
 }

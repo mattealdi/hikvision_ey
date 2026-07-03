@@ -3,6 +3,32 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.3] - 2026-07-03
+
+### Fixed
+- **Fix stale preferred_strategy**: in versioni precedenti la strategia
+  `cloud_a1` poteva essere erroneamente salvata come preferita in
+  `entry.options`, portando `UnlockManager` a provarla come primo tentativo
+  invece di `cloud_verified` (l'unica confermata funzionante su serie EY).
+  Alla partenza il coordinator ora ripulisce automaticamente qualsiasi
+  `preferred_strategy` non valida (accettate solo `cloud_verified` e `local`).
+- **Retry automatico su cloud_verified**: la strategia principale ora tenta
+  una seconda volta dopo 800ms in caso di errore transient del cloud
+  Hik-Connect (osservato empiricamente il 3 luglio 2026 mattina: 4 pressioni
+  consecutive fallite tutte con stesso errore cloud). Nessun impatto sul
+  tempo di risposta in caso di successo al primo colpo.
+
+### Changed
+- **Logging molto più esplicito sui fallimenti unlock**: quando la strategia
+  `cloud_verified` fallisce, il log WARNING ora mostra `http_status`,
+  `meta.code`, `meta.message`, `isapi.statusCode`, `subStatusCode` e i
+  primi 300 caratteri del campo `data` restituito dal cloud. Serve a
+  diagnosticare in fretta le cause reali dei fallimenti (limiti API,
+  device offline, permessi, ecc.).
+- `UnlockManager._build_auto_order()` non promuove più in cima strategie
+  legacy A1-A4 anche se presenti in `preferred_strategy`: solo
+  `cloud_verified` e `local` sono considerate preferibili di default.
+
 ## [0.3.2] - 2026-07-02
 
 ### Fixed

@@ -97,7 +97,22 @@ class HikvisionEyDeviceCoordinator(DataUpdateCoordinator[list[DeviceInfo]]):
             )
 
         # Unlock manager
+        # v0.3.3: se in options c'è una strategia legacy A1-A4 salvata
+        # da versioni precedenti (bug: veniva memorizzata come 'successo' anche
+        # quando cloud rispondeva 200 senza effettivo unlock sul bus), la
+        # ripuliamo qui una tantum. cloud_verified è l'unica affidabile su EY.
         preferred = opts.get(CONF_PREFERRED_STRATEGY)
+        _VALID_PREFERRED = {"cloud_verified", "local"}
+        if preferred and preferred not in _VALID_PREFERRED and preferred != "auto":
+            _LOGGER.warning(
+                "[DeviceCoordinator] Clearing stale preferred_strategy=%s (was legacy A1-A4)",
+                preferred,
+            )
+            new_options = {**entry.options}
+            new_options.pop(CONF_PREFERRED_STRATEGY, None)
+            hass.config_entries.async_update_entry(entry, options=new_options)
+            preferred = None
+
         self.unlock_manager = UnlockManager(
             self.client,
             isapi_client=self.isapi_client,

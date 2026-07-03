@@ -13,6 +13,7 @@ e logging dettagliato.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING, Any, Protocol
@@ -144,62 +145,77 @@ class StrategyVerified:
             serial,
         )
 
-        try:
-            resp = await self._client.raw_request_form("POST", url, form)
-        except Exception as exc:
-            _LOGGER.warning("[Verified] Request failed: %s", exc)
-            return UnlockResult(
-                success=False, strategy=self.name, error=str(exc)
-            )
+        # Un retry automatico per errori transient del cloud Hik-Connect.
+        # In v0.3.2 osservato: 4 pressioni consecutive fallite tutte con lo stesso
+        # errore cloud. Un breve retry copre la maggior parte dei glitch transient.
+        last_error: str | None = None
+        last_meta: int | None = None
+        last_http: int | None = None
+        last_isapi_status: int | None = None
 
-        meta_code = _extract_meta_code(resp)
-        http_status = resp.get("_http_status")
-        isapi_status, isapi_substatus = _extract_isapi_status(resp)
+        for attempt in (1, 2):
+            if attempt > 1:
+                await asyncio.sleep(0.8)
+                _LOGGER.info(
+                    "[Verified] Retry %d/2 after transient error (last: meta=%s isapi=%s)",
+                    attempt, last_meta, last_isapi_status,
+                )
 
-        cloud_ok = _is_success(meta_code)
-        isapi_ok = isapi_status is not None and isapi_status in ISAPI_SUCCESS_STATUS_CODES
+            try:
+                resp = await self._client.raw_request_form("POST", url, form)
+            except Exception as exc:
+                last_error = str(exc)
+                _LOGGER.warning("[Verified] Attempt %d request failed: %s", attempt, exc)
+                continue
 
-        # Se non riusciamo a parsare lo statusCode ISAPI ma il cloud dice 200,
-        # consideriamo successo (fail-open sul parsing XML).
-        success = cloud_ok and (isapi_ok or isapi_status is None)
+            meta_code = _extract_meta_code(resp)
+            http_status = resp.get("_http_status")
+            isapi_status, isapi_substatus = _extract_isapi_status(resp)
 
-        _LOGGER.debug(
-            "[Verified] meta.code=%s http=%s isapi.statusCode=%s isapi.subStatus=%s -> success=%s",
-            meta_code,
-            http_status,
-            isapi_status,
-            isapi_substatus,
-            success,
-        )
+            cloud_ok = _is_success(meta_code)
+            isapi_ok = isapi_status is not None and isapi_status in ISAPI_SUCCESS_STATUS_CODES
+            success = cloud_ok and (isapi_ok or isapi_status is None)
 
-        if success:
-            _LOGGER.info(
-                "[Verified] Unlock CONFIRMED for device %s door %d (channel %s)",
-                serial,
-                door_index,
-                form["channelNo"],
-            )
-        else:
-            _LOGGER.warning(
-                "[Verified] Unlock NOT confirmed: meta=%s isapi=%s/%s",
-                meta_code,
-                isapi_status,
-                isapi_substatus,
-            )
+            # Log SEMPRE il payload di risposta (troncato) quando NON è successo.
+            # Serve per diagnosticare cosa sta rispondendo il cloud.
+            if not success:
+                data_snippet = str(resp.get("data", ""))[:300]
+                meta_msg = ""
+                try:
+                    meta_msg = str(resp.get("meta", {}).get("message", ""))[:200]
+                except Exception:  # noqa: BLE001
+                    pass
+                _LOGGER.warning(
+                    "[Verified] Attempt %d NOT confirmed: http=%s meta.code=%s meta.msg=%r isapi.statusCode=%s subStatus=%s data=%r",
+                    attempt, http_status, meta_code, meta_msg,
+                    isapi_status, isapi_substatus, data_snippet,
+                )
+            else:
+                _LOGGER.info(
+                    "[Verified] Unlock CONFIRMED for device %s door %d (channel %s, attempt %d)",
+                    serial, door_index, form["channelNo"], attempt,
+                )
+                return UnlockResult(
+                    success=True,
+                    strategy=self.name,
+                    meta_code=meta_code,
+                    http_status=http_status,
+                )
 
-        error_detail = None
-        if not success:
-            error_detail = (
+            last_meta = meta_code
+            last_http = http_status
+            last_isapi_status = isapi_status
+            last_error = (
                 f"meta.code={meta_code}, isapi.statusCode={isapi_status}, "
                 f"subStatus={isapi_substatus}"
             )
 
         return UnlockResult(
-            success=success,
+            success=False,
             strategy=self.name,
-            meta_code=meta_code,
-            http_status=http_status,
-            error=error_detail,
+            meta_code=last_meta,
+            http_status=last_http,
+            error=last_error or "unknown",
         )
 
 
@@ -466,13 +482,35 @@ class UnlockManager:
         if isapi_client:
             self._strategy_map[STRATEGY_LOCAL] = StrategyLocal(isapi_client)
 
+    # Solo cloud_verified e local sono considerate valide come strategia
+    # preferita salvata. Le A1-A4 sono legacy sperimentali e non devono mai
+    # essere promosse in cima all'ordine (v0.3.2: bug osservato dove cloud_a1
+    # veniva salvata come preferred e ritardava di 4 tentativi la strategia
+    # che funziona davvero).
+    _VALID_PREFERRED = {STRATEGY_CLOUD_VERIFIED, STRATEGY_LOCAL}
+
     def _build_auto_order(self) -> list[str]:
         """Build the strategy execution order for 'auto' mode."""
-        order = []
-        # 1. Strategia preferita per prima (se disponibile)
-        if self.preferred_strategy and self.preferred_strategy != STRATEGY_AUTO:
-            if self.preferred_strategy in self._strategy_map:
-                order.append(self.preferred_strategy)
+        order: list[str] = []
+
+        # 1. Strategia preferita per prima — SOLO se è verified o local.
+        #    Se in options c'è una A1-A4 salvata da versioni precedenti,
+        #    la ignoriamo silenziosamente (verrà sovrascritta al primo
+        #    successo di verified).
+        if (
+            self.preferred_strategy
+            and self.preferred_strategy != STRATEGY_AUTO
+            and self.preferred_strategy in self._VALID_PREFERRED
+            and self.preferred_strategy in self._strategy_map
+        ):
+            order.append(self.preferred_strategy)
+        elif self.preferred_strategy and self.preferred_strategy not in self._VALID_PREFERRED:
+            _LOGGER.info(
+                "[UnlockManager] Ignoring stale preferred_strategy=%s (legacy A1-A4). "
+                "Will use cloud_verified first.",
+                self.preferred_strategy,
+            )
+
         # 2. Verified per prima (strategia empiricamente confermata sul serie EY)
         if STRATEGY_CLOUD_VERIFIED in self._strategy_map and STRATEGY_CLOUD_VERIFIED not in order:
             order.append(STRATEGY_CLOUD_VERIFIED)
