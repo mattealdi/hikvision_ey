@@ -147,6 +147,15 @@
       },
       "wifi_address": {
         "name": "WiFi Address"
+      },
+      "unlock_last_esito": {
+        "name": "Last Unlock Outcome"
+      },
+      "unlock_last_durata_ms": {
+        "name": "Last Unlock Duration"
+      },
+      "unlock_last_strategia": {
+        "name": "Last Unlock Strategy"
       }
     }
   }

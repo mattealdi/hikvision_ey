@@ -157,7 +157,12 @@ class HikvisionEyButton(HikvisionEyEntity, ButtonEntity):
                 if device and device.cameras:
                     channel = device.cameras[0].channel_number
 
-                result = await coordinator.unlock_manager.open_gate(
+                # v0.3.6: passiamo dal wrapper safety-aware del coordinator.
+                # Il wrapper applica cooldown 3s, serializzazione, timeout hard 5s
+                # e timestamp guard — vedi coordinator.open_gate_safely per i
+                # dettagli. NON usare più direttamente unlock_manager.open_gate
+                # dal layer entity per evitare aperture non protette.
+                result = await coordinator.open_gate_safely(
                     serial=serial,
                     channel=channel,
                     lock_index=self.entity_description.lock_index,
@@ -168,6 +173,11 @@ class HikvisionEyButton(HikvisionEyEntity, ButtonEntity):
                     _LOGGER.info("[Button] Gate opened: device=%s strategy=%s", serial, result.strategy)
                 else:
                     _LOGGER.warning("[Button] Gate open failed: device=%s error=%s", serial, result.error)
+                    # Rilancia come HomeAssistantError per notificare l'utente in UI
+                    from homeassistant.exceptions import HomeAssistantError
+                    raise HomeAssistantError(
+                        f"Apertura cancelletto fallita: {result.error}"
+                    )
 
             elif action == "answer":
                 await coordinator.client.answer_call(serial)

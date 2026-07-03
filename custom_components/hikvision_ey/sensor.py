@@ -1,15 +1,18 @@
 """Sensor entities per l'integrazione Hikvision EY.
 
-9 sensor:
-- firmware       — versione firmware
-- device_name    — nome dispositivo
-- serial         — numero seriale (breve)
-- cloud_status   — stato cloud testuale
-- last_call      — ultimo stato chiamata
-- last_event     — ultimo evento (doorbell/call)
-- call_count     — contatore chiamate sessione
-- wifi_quality   — qualità WiFi (percentuale 0-100%)
-- wifi_address   — IP locale/WiFi
+12 sensor:
+- firmware              — versione firmware
+- device_name           — nome dispositivo
+- serial                — numero seriale (breve)
+- cloud_status          — stato cloud testuale
+- last_call             — ultimo stato chiamata
+- last_event            — ultimo evento (doorbell/call)
+- call_count            — contatore chiamate sessione
+- wifi_quality          — qualità WiFi (percentuale 0-100%)
+- wifi_address          — IP locale/WiFi
+- unlock_last_esito     — diagnostica: esito ultima apertura (ok/bug_nullpoint/timeout/errore/ignorato_cooldown/scartato_tardivo)
+- unlock_last_durata_ms — diagnostica: durata ultima apertura in millisecondi
+- unlock_last_strategia — diagnostica: strategia usata nell'ultima apertura
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -101,6 +104,32 @@ SENSOR_DESCRIPTIONS: tuple[HikvisionEySensorDescription, ...] = (
         translation_key="wifi_address",
         icon="mdi:ip-network",
         value_key="local_ip",
+    ),
+    # ---- v0.3.6: sensori diagnostici apertura cancelletto ------------------
+    # Esposti in categoria DIAGNOSTIC per non ingombrare la UI principale.
+    # Aggiornati dal coordinator.open_gate_safely a ogni pressione bottone.
+    HikvisionEySensorDescription(
+        key="unlock_last_esito",
+        translation_key="unlock_last_esito",
+        icon="mdi:gate-open",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_key="unlock_esito",
+    ),
+    HikvisionEySensorDescription(
+        key="unlock_last_durata_ms",
+        translation_key="unlock_last_durata_ms",
+        icon="mdi:timer-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        value_key="unlock_durata_ms",
+    ),
+    HikvisionEySensorDescription(
+        key="unlock_last_strategia",
+        translation_key="unlock_last_strategia",
+        icon="mdi:strategy",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_key="unlock_strategia",
     ),
 )
 
@@ -193,5 +222,16 @@ class HikvisionEySensor(HikvisionEyEntity, SensorEntity):
 
         if key == "call_count":
             return self._call_count
+
+        # ---- v0.3.6: sensori diagnostici apertura --------------------------
+        # Letti da coordinator.last_unlock_stats, aggiornato dal wrapper safety.
+        if key.startswith("unlock_"):
+            stats = getattr(self.coordinator, "last_unlock_stats", None) or {}
+            if key == "unlock_esito":
+                return stats.get("esito")
+            if key == "unlock_durata_ms":
+                return stats.get("durata_ms")
+            if key == "unlock_strategia":
+                return stats.get("strategia")
 
         return None

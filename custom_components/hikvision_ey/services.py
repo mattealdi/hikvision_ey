@@ -96,7 +96,9 @@ async def _handle_open_gate(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
     try:
-        result = await coordinator.unlock_manager.open_gate(
+        # v0.3.6: passa dal wrapper safety-aware (cooldown 3s, timeout hard 5s,
+        # timestamp guard). Anche via servizio HA / automazione, mai bypassare.
+        result = await coordinator.open_gate_safely(
             serial=serial,
             channel=channel,
             lock_index=lock_index,

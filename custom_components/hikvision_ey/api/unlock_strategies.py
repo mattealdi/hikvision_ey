@@ -1,7 +1,6 @@
 """Strategie di unlock per Hikvision EY.
 
-Implementa 5 strategie cloud + 1 locale, con logica auto-selection
-e logging dettagliato.
+Implementa 5 strategie cloud, con logica auto-selection e logging dettagliato.
 
 - cloud_verified (A0): ISAPI tunnel via /v3/userdevices/v1/isapi
   con body form-urlencoded. **Verificato empiricamente** su
@@ -9,7 +8,14 @@ e logging dettagliato.
   reverse-engineering via mitmproxy dell'app HikConnect iOS).
 - cloud_a1..a4: strategie legacy/sperimentali mantenute come fallback
   per compatibilità con altre configurazioni hardware.
-- local: ISAPI diretto in LAN (bypassa il cloud).
+
+NOTA v0.3.6: la strategia `local` (ISAPI diretto LAN) è stata rimossa
+dalle strategie attive dopo verifica sperimentale del 3/7/2026 sul
+DS-KH7300EY-WTE2 SN GA9672303: il monitor serie EY consumer risponde
+al ping ma tiene chiuse TUTTE le porte TCP di gestione (80, 443, 554,
+8000, 8080, 8200) e non risponde al broadcast SADP. Il canale ISAPI
+locale non è raggiungibile end-user su questa gamma di prodotto.
+StrategyLocal è stata rimossa per non generare log fuorvianti.
 """
 from __future__ import annotations
 
@@ -145,15 +151,15 @@ class StrategyVerified:
             serial,
         )
 
-        # Retry conservativo per errori transient del cloud/firmware.
-        # SICUREZZA: la finestra massima è volutamente breve (~1.3s totale)
-        # per evitare che dopo un fallimento apparente l'utente vada ad aprire
-        # con la chiave, passi, richiuda, e nel frattempo un retry tardivo
-        # riapra il cancelletto pedonale sulla strada dietro le sue spalle.
-        # Un solo retry rapido è il compromesso tra affidabilità e sicurezza.
-        # Casi di NULLpoint prolungato (osservati il 3/7/2026, durata >70s)
-        # falliranno chiaramente e l'utente ripremerà quando serve.
-        RETRY_DELAYS = [0, 0.8]
+        # SICUREZZA CANCELLETTO PEDONALE (v0.3.6):
+        # 4 tentativi entro 2.0s totali (0, 0.6, 1.2, 1.8). Oltre 2s la finestra
+        # di attesa naturale dell'utente davanti al citofono è finita e chi ha
+        # già iniziato ad aprire con la chiave non deve rischiare di trovarsi
+        # il cancelletto riaperto alle spalle. Il retry serve solo a coprire
+        # NULLpoint transient di 1-2 secondi; per NULLpoint cronici (30-40s
+        # osservati su firmware V2.2.56 build 250306) il retry NON serve, va
+        # dato feedback di errore all'utente che ripremerà quando serve.
+        RETRY_DELAYS = [0, 0.6, 1.2, 1.8]
         last_error: str | None = None
         last_meta: int | None = None
         last_http: int | None = None
@@ -432,31 +438,8 @@ class StrategyA4:
 # ── Strategia Local — ISAPI locale ────────────────────────────────────────────
 
 
-class StrategyLocal:
-    """Strategia Local: ISAPI diretto LAN con Digest auth.
-
-    Il percorso più affidabile e veloce. Bypassa il cloud.
-    Richiede IP + credenziali admin del monitor.
-    """
-
-    name: str = STRATEGY_LOCAL
-
-    def __init__(self, isapi_client: LocalISAPIClient) -> None:
-        """Initialize with a local ISAPI client."""
-        self._client = isapi_client
-
-    async def execute(self, serial: str, channel: int, lock_index: int) -> UnlockResult:
-        """Execute local ISAPI strategy."""
-        _LOGGER.debug("[Local] Opening door %d via local ISAPI", lock_index)
-        try:
-            success = await self._client.open_door(lock_index)
-        except Exception as exc:
-            _LOGGER.warning("[Local] ISAPI door open failed: %s", exc)
-            return UnlockResult(success=False, strategy=self.name, error=str(exc))
-
-        if success:
-            _LOGGER.info("[Local] Door %d opened via local ISAPI", lock_index)
-        return UnlockResult(success=success, strategy=self.name)
+# StrategyLocal rimossa in v0.3.6 (porte ISAPI chiuse sul serie EY).
+# Vedi docstring del modulo per il ragionamento.
 
 
 # ── Auto-selection ────────────────────────────────────────────────────────────
@@ -494,15 +477,13 @@ class UnlockManager:
             STRATEGY_CLOUD_A3: StrategyA3(client),
             STRATEGY_CLOUD_A4: StrategyA4(client),
         }
-        if isapi_client:
-            self._strategy_map[STRATEGY_LOCAL] = StrategyLocal(isapi_client)
+        # v0.3.6: nessuna registrazione di StrategyLocal (porte chiuse).
+        # isapi_client resta memorizzato solo per compatibilità futura.
 
-    # Solo cloud_verified e local sono considerate valide come strategia
-    # preferita salvata. Le A1-A4 sono legacy sperimentali e non devono mai
-    # essere promosse in cima all'ordine (v0.3.2: bug osservato dove cloud_a1
-    # veniva salvata come preferred e ritardava di 4 tentativi la strategia
-    # che funziona davvero).
-    _VALID_PREFERRED = {STRATEGY_CLOUD_VERIFIED, STRATEGY_LOCAL}
+    # v0.3.6: solo cloud_verified è considerata valida come strategia preferita
+    # salvata. Le A1-A4 sono legacy sperimentali e non devono mai essere
+    # promosse in cima all'ordine (v0.3.2). STRATEGY_LOCAL rimosso.
+    _VALID_PREFERRED = {STRATEGY_CLOUD_VERIFIED}
 
     def _build_auto_order(self) -> list[str]:
         """Build the strategy execution order for 'auto' mode."""
@@ -529,11 +510,7 @@ class UnlockManager:
         # 2. Verified per prima (strategia empiricamente confermata sul serie EY)
         if STRATEGY_CLOUD_VERIFIED in self._strategy_map and STRATEGY_CLOUD_VERIFIED not in order:
             order.append(STRATEGY_CLOUD_VERIFIED)
-        # 3. Local (se disponibile e non già inclusa) — dopo Verified perché
-        #    Verified è confermato funzionante e non richiede setup LAN.
-        if STRATEGY_LOCAL in self._strategy_map and STRATEGY_LOCAL not in order:
-            order.append(STRATEGY_LOCAL)
-        # 4. Cloud legacy A4 -> A3 -> A2 -> A1 (fallback per hardware diverso)
+        # 3. Cloud legacy A4 -> A3 -> A2 -> A1 (fallback per hardware diverso)
         for s in [STRATEGY_CLOUD_A4, STRATEGY_CLOUD_A3, STRATEGY_CLOUD_A2, STRATEGY_CLOUD_A1]:
             if s not in order:
                 order.append(s)

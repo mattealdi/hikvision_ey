@@ -3,6 +3,64 @@
 Tutte le modifiche rilevanti al progetto sono documentate qui.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.0.0/).
 
+## [0.3.6] - 2026-07-03
+
+### Security / Safety
+- **Safety layer end-to-end sull'apertura cancelletto pedonale.** Ogni
+  richiesta di apertura passa ora dal wrapper `open_gate_safely` del
+  coordinator, che applica quattro garanzie di sicurezza:
+  1. **Cooldown 3s** tra pressioni consecutive: la seconda pressione
+     ravvicinata viene ignorata (nessuna doppia apertura accodata).
+  2. **Serializzazione** via `asyncio.Lock`: mai due richieste in flight.
+  3. **Timeout hard 5s**: la richiesta viene cancellata se non torna
+     entro 5 secondi (protezione da ritardi cloud/rete anomali).
+  4. **Timestamp guard >5s**: se una risposta positiva del cloud arriva
+     oltre 5s dalla pressione, viene **rigettata** e non produce
+     apertura. Protezione contro il caso: utente non apre col bottone,
+     va ad aprire con la chiave, richiude, e nel frattempo il cloud
+     recapita tardivamente il comando.
+- **Finestra retry `StrategyVerified` estesa a 2.0s** (4 tentativi a
+  0/0.6/1.2/1.8s, era 1.3s in v0.3.5). Alza la % di apertura al primo
+  press su NULLpoint transient di 1-2s senza uscire dalla finestra di
+  attesa naturale dell'utente davanti al citofono. Sicurezza cancelletto
+  intatta perché il wrapper garantisce comunque il taglio a 5s.
+
+### Changed
+- **Strategia `local` rimossa** dalle strategie attive nell'`UnlockManager`.
+  Verifica sperimentale del 3/7/2026 sul DS-KH7300EY-WTE2 SN GA9672303:
+  il monitor risponde al ping ma tiene chiuse **tutte** le porte TCP di
+  gestione (80, 443, 554, 8000, 8080, 8200) e non risponde nemmeno al
+  discovery SADP. La gamma consumer EY non espone canale ISAPI locale
+  end-user, quindi mantenere la strategia come opzione era fuorviante.
+  L'infrastruttura `LocalISAPIClient` resta nel package `api/` per
+  eventuali firmware futuri che riabilitino la gestione locale.
+- **Bottoni HA e servizio `hikvision_ey.open_gate`** ora chiamano
+  esclusivamente `coordinator.open_gate_safely`, mai più direttamente
+  `unlock_manager.open_gate`. Nessuna via di apertura non protetta.
+
+### Added
+- **3 sensori diagnostici** in categoria DIAGNOSTIC:
+  - `sensor.hikvision_ey_..._unlock_last_esito` — esito ultima apertura:
+    `ok` / `bug_nullpoint` / `timeout` / `errore` / `ignorato_cooldown` /
+    `scartato_tardivo`.
+  - `sensor.hikvision_ey_..._unlock_last_durata_ms` — latenza in ms.
+  - `sensor.hikvision_ey_..._unlock_last_strategia` — strategia usata.
+  Permettono di monitorare in HA se il bug NULLpoint del firmware
+  V2.2.56 è ancora presente o se un futuro firmware l'ha risolto.
+
+### Fixed
+- Bottone "Apri cancelletto" ora rilancia `HomeAssistantError` con
+  messaggio esplicito in italiano in caso di fallimento (prima falliva
+  silenziosamente).
+
+### Rationale
+La versione risponde al vincolo di sicurezza sollevato dall'utente:
+"Se non apre con il bottone e in 2,5 s apro con la chiave e richiudo,
+il cancelletto potrebbe riaprirsi?". Con il timestamp guard è ora
+matematicamente impossibile che si apra più di 5s dopo la pressione
+del bottone, indipendentemente da comportamenti anomali di cloud o
+firmware.
+
 ## [0.3.5] - 2026-07-03
 
 ### Security / Safety
